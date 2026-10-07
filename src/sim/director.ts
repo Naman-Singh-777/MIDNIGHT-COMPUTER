@@ -102,7 +102,24 @@ export class Director {
     // the lamp is safe for the first half of the shift. After that it is not.
     if (t > 0.3 && ctx.minute > ctx.shiftLength * 0.45 && ctx.powerOn) pool.push('flicker');
     if (t > 0.55 || ctx.stage >= 3) pool.push('whisper');
-    if (!ctx.powerOn) return this.rng.pick(['distant_step', 'whisper', 'door_creak'] as DirectorCue[]);
+    const booth = ctx.zone === 'booth';
+    if (booth) {
+      pool.push('chair_creak', 'overhead_steps');
+      if (t > 0.3 && ctx.minute > 40) pool.push('music_box');
+      if (t > 0.38) pool.push('scratch');
+      if (t > 0.45 && ctx.stage >= 1) pool.push('knob_rattle');
+      if (!ctx.patientPresent && ctx.stage >= 1) pool.push('window_tap');
+      if (ctx.stage >= 2 && t > 0.5 && !ctx.patientPresent) pool.push('breath_behind');
+    } else {
+      pool.push('pipe_knock', 'scratch');
+      if (t > 0.35) pool.push('child_hum', 'wheelchair');
+      if (t > 0.5 && ctx.stage >= 2) pool.push('breath_behind', 'knob_rattle');
+    }
+    if (!ctx.powerOn) {
+      const dark: DirectorCue[] = ['distant_step', 'whisper', 'door_creak', 'pipe_knock', 'scratch', 'child_hum', 'wheelchair'];
+      if (booth) dark.push('chair_creak', 'overhead_steps');
+      return this.rng.pick(dark);
+    }
     return this.rng.pick(pool);
   }
 }

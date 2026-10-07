@@ -1,3 +1,8 @@
+import '@fontsource/special-elite/latin-400.css';
+import '@fontsource/im-fell-english/latin-400.css';
+import '@fontsource/im-fell-english/latin-400-italic.css';
+import '@fontsource/reenie-beanie/latin-400.css';
+import '@fontsource/vt323/latin-400.css';
 import './style.css';
 import type { Patient, QuestionId, RegistryEntry, Verdict } from '../sim/types';
 import { QUESTION_TEXT } from '../sim/patients';
@@ -35,22 +40,22 @@ export class Hud {
       `
       <div id="clock" class="hud"><div class="time">22:00</div><div class="task"></div></div>
       <div id="bars" class="hud">
-        <div>Composure</div><div class="bar sanity"><i></i></div>
-        <div class="stam" style="display:none">Stamina</div><div class="bar stam" style="display:none"><i></i></div>
+        <div>nerves</div><div class="bar sanity"><i></i></div>
+        <div class="stam" style="display:none">wind</div><div class="bar stam" style="display:none"><i></i></div>
       </div>
       <div id="cross" class="hud"></div>
       <div id="prompt" class="hud"><span class="t"></span><span class="hold"></span></div>
       <div id="subtitle" class="hud"><span class="who"></span><span class="text"></span></div>
       <div id="flashlight" class="hud">F  flashlight</div>
       <div id="cards">
-        <div class="card" id="slip"><h3>Admission slip</h3><dl></dl></div>
-        <div class="card crt off" id="ledger"><h3>Ledger terminal</h3><dl><dt>STATUS</dt><dd>Standing by</dd></dl></div>
-        <div class="card" id="logcard"><h3>Your notes</h3><div id="log"></div></div>
+        <div class="card" id="slip"><h3>Admission slip<small>Vesper Hollow Sanatorium</small></h3><dl></dl><span class="received">RECEIVED</span></div>
+        <div class="card crt off" id="ledger"><h3>VESPER LEDGER</h3><dl><dt>STATUS</dt><dd>Standing by</dd></dl></div>
+        <div class="card" id="logcard"><h3>notes</h3><div id="log"></div></div>
       </div>
       <div id="desk">
-        <div class="group"><h4>Ask</h4><div class="row" id="qrow"></div></div>
-        <div class="group"><h4>Check</h4><div class="row" id="trow"></div></div>
-        <div class="group"><h4>Decide</h4><div class="row" id="vrow"></div></div>
+        <div class="group"><h4>ask</h4><div class="row" id="qrow"></div></div>
+        <div class="group"><h4>check</h4><div class="row" id="trow"></div></div>
+        <div class="group"><h4>decide</h4><div class="row" id="vrow"></div></div>
       </div>
       <div id="perf" class="hud"></div>
       <div id="overlay"><div class="box"></div></div>`,
@@ -164,7 +169,7 @@ export class Hud {
     this.asked.clear();
     const dl = $('#slip dl');
     if (!p) {
-      dl.innerHTML = '<dt>Desk</dt><dd>Empty</dd>';
+      dl.innerHTML = '<dt>Desk</dt><dd>nobody at the window</dd>';
       $('#log').innerHTML = '';
       this.setLedger(null, true);
       this.setDeskEnabled(false);
@@ -174,9 +179,9 @@ export class Hud {
     dl.innerHTML = `
       <dt>Name</dt><dd>${esc(p.docs.slipName)}</dd>
       <dt>Born</dt><dd>${esc(p.docs.slipDob)}</dd>
-      <dt>Referred by</dt><dd>${esc(p.docs.slipSender)}</dd>
+      <dt>Sent by</dt><dd>${esc(p.docs.slipSender)}</dd>
       <dt>Wristband</dt><dd>${esc(p.docs.wristband)}</dd>
-      <dt>Photograph</dt><dd>${esc(p.docs.photoMark)}</dd>`;
+      <dt>Photo shows</dt><dd>${esc(p.docs.photoMark)}</dd>`;
     $('#log').innerHTML = '';
     this.setLedger(null, true);
     this.btnQ.forEach((b) => b.classList.remove('used'));
@@ -193,7 +198,7 @@ export class Hud {
     const log = $('#log');
     const p = document.createElement('p');
     p.className = kind;
-    p.textContent = kind === 'q' ? `You: ${text}` : text;
+    p.textContent = kind === 'q' ? `asked: ${text.replace(/\?$/, '')}` : text;
     log.appendChild(p);
     while (log.children.length > 9) log.removeChild(log.firstChild!);
   }

@@ -1,6 +1,7 @@
 import { Bus } from '../core/events';
 import { Rng } from '../core/rng';
 import { SHIFT00, SHIFT00_BREAKER_AT, SHIFT00_END, SHIFT00_FINALE_AT } from '../data/shift00';
+import { BEATS } from '../data/story';
 import { Director } from './director';
 import { distortionFor } from './perception';
 import { QUESTION_TEXT, makePatient, makeRegistry } from './patients';
@@ -44,6 +45,7 @@ export interface SimState {
   stage: number; // Understudy stage 0..7
   sanity: number;
   fear: number;
+  stare: boolean; // the patient is holding your eye
   score: ShiftScore;
   seq: number;
 }
@@ -64,11 +66,18 @@ export class Simulation {
   state: SimState;
   private hallT = 5;
   private storyDone = new Set<string>();
+  private readonly gazeRng: Rng;
+  private stareT = 10;
+  private stareLeft = 0;
+  private stareHit = false;
+  private ducked = false;
+  private gazing = false;
 
   constructor(readonly seed: number) {
     this.rng = new Rng(seed);
     this.presRng = new Rng(seed ^ 0x9e3779b9);
     this.director = new Director(new Rng(seed ^ 0x51ed270b));
+    this.gazeRng = new Rng(seed ^ 0x2545f491);
     this.state = {
       minute: 0,
       ended: false,
@@ -93,6 +102,7 @@ export class Simulation {
       stage: 0,
       sanity: 100,
       fear: 0,
+      stare: false,
       score: { correct: 0, wrong: 0, admittedUnderstudies: 0, refusedHumans: 0, sanity: 100 },
       seq: 0,
     };
@@ -117,6 +127,7 @@ export class Simulation {
     s.fear = Math.max(0, s.fear - dt * 0.15);
     this.updateSanity(dt);
     this.runStory();
+    this.runStare(dt);
     this.runBreaker();
     this.runPatients(dt);
     this.runConsequences();
@@ -143,6 +154,12 @@ export class Simulation {
     s.sanity = clamp(s.sanity + d * dt, 0, 100);
   }
 
+  private bumpStage(): void {
+    const s = this.state;
+    s.stage = Math.min(7, s.stage + 1);
+    this.bus.emit('cue', { cue: 'stage_up', intensity: 0.4 + s.stage * 0.08 });
+  }
+
   private spike(fear: number, sanityHit = 0): void {
     const s = this.state;
     s.fear = clamp(s.fear + fear, 0, 1);
@@ -150,19 +167,88 @@ export class Simulation {
   }
 
   // ---------------------------------------------------------------- story
-  private say(id: string, text: string, speaker = 'Sister Imogen'): void {
+  private say(id: string, text: string, speaker = 'Sister Imogen', call = false): void {
     if (this.storyDone.has(id)) return;
     this.storyDone.add(id);
-    this.bus.emit('story', { id, text, speaker });
+    this.bus.emit('story', { id, text, speaker, call });
   }
 
   private runStory(): void {
-    const m = this.state.minute;
-    if (m > 0.6) this.say('open', 'Night intake, Vesper Hollow. Rain has the road to itself, so you will be a little lonely. Compare the slip to the ledger, ask your five questions, and trust the lamp more than your nerves. Mind the ledger, love.');
-    if (m > 52) this.say('pell1', 'Ward B is quiet. Too quiet, ha. That was a joke, Officer. Please laugh, I have been practising.', 'Orderly Pell');
-    if (m > 96 && !this.state.breakerTripped) this.say('breaker_warn', 'The east breaker trips when the weather turns. If it goes, do not linger in that corridor. Warm hands, steady voice.');
-    if (m > 150) this.say('pell2', 'Quick head count: Ward B has eleven. The register says eleven. I counted twelve for a second. Do not mind me.', 'Orderly Pell');
-    if (m > 215) this.say('imogen3', 'If anyone rings the gate and says my name, ask them what I told you to mind. Only I know the answer.');
+    const s = this.state;
+    for (const b of BEATS) {
+      if (this.storyDone.has(b.id) || s.minute < b.at) continue;
+      if (b.id === 'breaker_warn' && s.breakerTripped) {
+        this.storyDone.add(b.id);
+        continue;
+      }
+      if (b.minStage !== undefined && s.stage < b.minStage) {
+        if (s.minute > b.at + 40) this.storyDone.add(b.id);
+        continue;
+      }
+      if (b.needsFinale && !s.finaleDone) continue;
+      // never talk over the officer's own interview; wait for a gap
+      if (s.phase === 'present' && s.asked.length > 0 && s.minute < b.at + 8) continue;
+      this.say(b.id, b.text, b.who, b.call ?? false);
+      return;
+    }
+  }
+
+  // ---------------------------------------------------------------- the stare rule
+  /** Seated player ducked below the sill. */
+  setDuck(on: boolean): void {
+    this.ducked = on;
+  }
+
+  /** Seated player is zoomed on the patient's face. */
+  setGaze(on: boolean): void {
+    this.gazing = on;
+  }
+
+  private runStare(dt: number): void {
+    const s = this.state;
+    const p = s.current;
+    const eligible =
+      !!p &&
+      s.phase === 'present' &&
+      s.powerOn &&
+      ((p.truth === 'understudy' && (s.stage >= 1 || p.archetype !== 'slipping_mimic')) || p.archetype === 'strange_innocent');
+    if (!eligible) {
+      if (s.stare) this.endStare();
+      this.stareT = Math.max(this.stareT, 7);
+      return;
+    }
+    if (this.ducked) s.patience -= dt / 150;
+    if (s.stare) {
+      this.stareLeft -= dt;
+      if (this.ducked) this.stareLeft = Math.min(this.stareLeft, 1.2);
+      else if (this.gazing) this.contact();
+      if (this.stareLeft <= 0) this.endStare();
+    } else {
+      this.stareT -= dt;
+      if (this.stareT <= 0) {
+        s.stare = true;
+        this.stareLeft = this.gazeRng.range(4, 6.5);
+        this.stareHit = false;
+        this.bus.emit('stare', { on: true, hit: false });
+      }
+    }
+  }
+
+  private endStare(): void {
+    const s = this.state;
+    s.stare = false;
+    this.stareT = this.gazeRng.range(15, 28);
+    this.bus.emit('stare', { on: false, hit: this.stareHit });
+  }
+
+  /** Eye contact during a stare. Only the Understudy punishes it. */
+  private contact(): void {
+    const s = this.state;
+    if (!s.stare || this.stareHit || this.ducked || !s.current) return;
+    if (s.current.truth !== 'understudy') return;
+    this.stareHit = true;
+    this.spike(0.45, 9);
+    this.bus.emit('stare', { on: true, hit: true });
   }
 
   // ---------------------------------------------------------------- breaker
@@ -270,6 +356,8 @@ export class Simulation {
     s.lastLine = '';
     s.lookedUp = false;
     s.faceChecked = false;
+    s.stare = false;
+    this.stareT = this.gazeRng.range(9, 16);
     this.bus.emit('patientArrived', { patient: p });
   }
 
@@ -285,6 +373,7 @@ export class Simulation {
     const s = this.state;
     if (!s.current || s.phase !== 'present') return null;
     s.faceChecked = true;
+    this.contact();
     return s.current.faceMark;
   }
 
@@ -333,14 +422,14 @@ export class Simulation {
       if (v === 'admit') {
         wrong = true;
         s.score.admittedUnderstudies++;
-        s.stage = Math.min(7, s.stage + 1);
+        this.bumpStage();
         this.schedule('ward_incident', p, 22);
         this.spike(0.1, 5);
       } else if (v === 'observe') {
         this.schedule('observation_breach', p, 18);
         this.spike(0.15, 2);
       } else if (v === 'refuse') {
-        s.stage = Math.min(7, s.stage + 1);
+        this.bumpStage();
         this.schedule('window_return', p, 34);
         this.spike(0.1, 1);
       } else if (v === 'contain') {
@@ -385,10 +474,11 @@ export class Simulation {
         case 'ward_incident':
           this.say(`inc_${p.id}`, 'Ward B, Pell here. The new admission asked me for my name. Then said it back to me before I answered. Did you let someone through, Officer?', 'Orderly Pell');
           this.spike(0.7, 8);
+          this.bus.emit('cue', { cue: 'overhead_steps', intensity: 0.8 });
           this.bus.emit('cue', { cue: 'whisper', intensity: 0.8 });
           break;
         case 'observation_breach':
-          s.stage = Math.min(7, s.stage + 1);
+          this.bumpStage();
           this.say(`obs_${p.id}`, 'Observation room is open. The door was not forced. It was asked nicely.', 'Night Nurse Kessler');
           this.spike(0.8, 8);
           this.bus.emit('cue', { cue: 'door_creak', intensity: 0.9 });
@@ -396,7 +486,7 @@ export class Simulation {
         case 'window_return':
           this.say(`ret_${p.id}`, `Someone is at the window again. It looks like ${p.displayName}. No coat.`, 'Orderly Pell');
           this.spike(0.3, 3);
-          this.bus.emit('cue', { cue: 'knock', intensity: 0.7 });
+          this.bus.emit('cue', { cue: p.truth === 'understudy' ? 'window_tap' : 'knock', intensity: 0.7 });
           if (p.truth === 'understudy') {
             const entry = this.registryOf(p);
             this.state.queue.push(makePatient({ rng: this.rng, entry, archetype: 'slipping_mimic', stage: s.stage, previous: s.history, quirk: 'Back at the window. Knows what you asked last time.', seq: ++s.seq }));

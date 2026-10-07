@@ -6,16 +6,20 @@ Game: Asylum Intake: The Midnight Shift. Web build with TypeScript, Three.js, Vi
 
 Checked by `npm run typecheck`, `npm test`, `npm run build` and `node tools/smoke.mjs` (headless Chromium, software GL):
 
-1. Typecheck is clean and 16 simulation tests pass.
+1. Typecheck is clean and 20 simulation tests pass.
 2. The production build succeeds. The JS bundle is about 4.9 MB (1.8 MB gzip), mostly the inlined Rapier WASM. Code splitting is a later task.
 3. The page loads with no console errors in desktop and phone viewports.
 4. A patient reaches the window, the slip card fills in, and keyboard input (1, 2, Z, A) asks, looks up and decides.
 5. The breaker trips at 23:45 game time (minute 105). The corridor lights go red. The breaker prompt appears. Restoring power works.
 
+## Added in the second round
+
+Detailed patient models, period fonts and paperwork UI, crouch and zoom and head bob, the stare rule, twelve story beats with phone calls, and about fifteen new procedural sounds. See `docs/HANDOFF_FOR_OPUS.md` for the full list and what is next.
+
 ## What is not verified
 
 1. Frame rate on real hardware. Headless software GL runs at about 55 ms per frame, which says nothing about an Iris Xe.
-2. Audio. WebAudio needs a user gesture and real output, so nothing was listened to.
+2. Audio. WebAudio needs a user gesture and real output, so nothing was listened to, including every sound added in round two.
 3. Pointer lock, walking feel, sprint and stamina by hand.
 4. The finale at minute 268 and the end screen were not played through in the browser. The simulation tests cover shift end only.
 5. The patient face texture orientation looks right in one screenshot. Other face marks have not been inspected.

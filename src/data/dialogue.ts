@@ -26,18 +26,21 @@ export const SPEAKER_VOICE: Record<string, { pitch: number; radio: boolean }> = 
   'Sister Imogen': { pitch: 205, radio: true },
   'Orderly Pell': { pitch: 112, radio: true },
   'Night Nurse Kessler': { pitch: 168, radio: true },
+  "Matron's Office": { pitch: 142, radio: true },
 };
 
 export const TITLE_HTML = `
   <h1>Asylum Intake</h1>
-  <h2>The Midnight Shift &middot; Shift 00</h2>
-  <p>Vesper Hollow Sanatorium, October 1963. Rain on the road. One lamp. You have the night intake desk.</p>
-  <p>People arrive with a slip. Check the slip against the ledger. Ask your five questions. Decide who goes through the gate.</p>
-  <p>Some of them are not people. The warm light is yours until it is not.</p>
-  <button class="btn big" data-begin>Begin the shift</button>
+  <h2>The Midnight Shift &middot; Night 00</h2>
+  <p>Vesper Hollow Sanatorium, October 1963. Rain on the road, one lamp on the desk, and you on the night intake window until six.</p>
+  <p>People come to the glass with a slip. Check the slip against the ledger. Ask your five questions. Then decide who goes through the gate.</p>
+  <p>Not everyone who comes to the window is someone. The lamp is honest. For now.</p>
+  <p class="note">Standing orders: keep the lamp lit. Do not hold their eye.</p>
+  <button class="btn big" data-begin>Begin shift</button>
   <div class="keys">
-    Seated: mouse to look &middot; 1 to 5 ask &middot; Z ledger &middot; X face &middot; A admit &middot; O observe &middot; R refuse &middot; L lever<br>
-    Q stand up or sit back down &middot; Standing: WASD move &middot; Shift sprint &middot; E use &middot; F flashlight &middot; F3 performance
+    AT THE DESK &nbsp; mouse: look &nbsp; 1-5: ask &nbsp; Z: ledger &nbsp; X: study the face &nbsp; A: admit &nbsp; O: observe &nbsp; R: refuse &nbsp; L: lever<br>
+    C: duck below the sill &nbsp; hold right mouse: lean in &nbsp; Q: stand up or sit down<br>
+    ON YOUR FEET &nbsp; WASD: walk &nbsp; Shift: run &nbsp; C: crouch &nbsp; E: use &nbsp; F: flashlight &nbsp; M: mute &nbsp; F3: performance
   </div>`;
 
 export const PAUSE_HTML = `
@@ -54,9 +57,9 @@ export function endHtml(score: { correct: number; wrong: number; admittedUnderst
         : 'The ward is still standing. Some of the paperwork is not.';
   return `
   <h1>06:00</h1>
-  <h2>Shift 00 complete</h2>
+  <h2>Night 00 complete</h2>
   <p>${verdict}</p>
   <p>Right calls: ${score.correct}. Wrong calls: ${score.wrong}. Understudies admitted: ${score.admittedUnderstudies}. People turned away or contained: ${score.refusedHumans}. Composure: ${score.sanity}%.</p>
-  <p style="color:#b08a3e">Before you close the book, you turn to the first page of the intake ledger. Entry 000. Your handwriting. Dated tonight, 22:00.<br><br>${name}: admitted.</p>
+  <p class="note">Before you close the book you turn to the first page of the intake ledger. Entry 000. Your handwriting, dated tonight, 22:00.<br>${name}: admitted.</p>
   <button class="btn big" data-begin>Work another night</button>`;
 }

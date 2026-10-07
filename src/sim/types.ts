@@ -94,7 +94,18 @@ export type DirectorCue =
   | 'power_out'
   | 'power_back'
   | 'door_creak'
-  | 'drip_stop';
+  | 'drip_stop'
+  | 'music_box'
+  | 'scratch'
+  | 'breath_behind'
+  | 'window_tap'
+  | 'knob_rattle'
+  | 'chair_creak'
+  | 'overhead_steps'
+  | 'pipe_knock'
+  | 'child_hum'
+  | 'wheelchair'
+  | 'stage_up';
 
 export type SimEvents = {
   clock: { minute: number };
@@ -106,7 +117,8 @@ export type SimEvents = {
   consequence: { c: Consequence; patient: Patient };
   powerChanged: { on: boolean };
   taskChanged: { id: string; text: string; done: boolean };
-  story: { id: string; text: string; speaker?: string };
+  story: { id: string; text: string; speaker?: string; call?: boolean };
+  stare: { on: boolean; hit: boolean };
   hallucination: { kind: 'phantom_step' | 'phantom_knock' | 'whisper_name' | 'shadow_figure' };
   shiftEnded: { score: ShiftScore };
 };

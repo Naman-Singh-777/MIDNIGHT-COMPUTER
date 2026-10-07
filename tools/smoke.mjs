@@ -32,6 +32,10 @@ const advanceUntil = (page, cond, maxSteps = 4000) =>
   }, [cond, maxSteps]);
 
 try {
+  const t = await open('title', 1280, 720, '?seed=7');
+  await t.waitForTimeout(1500);
+  await t.screenshot({ path: `${out}/title.png` });
+  await t.close();
   const p = await open('desk', 1280, 720, '?seed=7&autostart');
   const n = await advanceUntil(p, "s.phase==='present'");
   console.log('steps until first patient present:', n);
@@ -39,6 +43,36 @@ try {
   await p.screenshot({ path: `${out}/desk-patient.png` });
   console.log('perf', JSON.stringify(await p.evaluate(() => ({ ...window.__game.debug, frameMs: window.__game.frameMs }))));
 
+  // duck under the sill, then lean in
+  const y0 = await p.evaluate(() => window.__game.player.camera.position.y);
+  await p.keyboard.down('KeyC');
+  await p.waitForTimeout(2500);
+  const y1 = await p.evaluate(() => window.__game.player.camera.position.y);
+  await p.screenshot({ path: `${out}/duck.png` });
+  await p.keyboard.up('KeyC');
+  await p.mouse.move(640, 360);
+  await p.mouse.down({ button: 'right' });
+  await p.waitForTimeout(2500);
+  const fov = await p.evaluate(() => window.__game.player.camera.fov);
+  await p.mouse.up({ button: 'right' });
+  console.log('eye height seated', y0.toFixed(2), 'ducked', y1.toFixed(2), 'zoom fov', fov.toFixed(1));
+  // every new sound must at least run without throwing (nobody can listen headless)
+  const audioErrs = await p.evaluate(() => {
+    const a = window.__game.audio;
+    const bad = [];
+    try { a.start(); } catch (e) { bad.push('start ' + e.message); }
+    const pos = { x: 1, y: 1, z: 0 };
+    const calls = {
+      musicBox: () => a.musicBox(pos, 3), breathBehind: () => a.breathBehind(), scratch: () => a.scratch(pos), windowTap: () => a.windowTap(pos),
+      knobRattle: () => a.knobRattle(pos), chairCreak: () => a.chairCreak(), overheadSteps: () => a.overheadSteps(), pipeKnock: () => a.pipeKnock(pos),
+      childHum: () => a.childHum(pos), wheelchair: () => a.wheelchair(pos), stageUp: () => a.stageUp(0.5), riser: () => a.riser(1), stareOn: () => a.stareOn(),
+      stareOff: () => a.stareOff(false), stareHit: () => a.stareHit(), clack: () => a.clack(), ding: () => a.ding(), paper: () => a.paper(), powerDown: () => a.powerDown(),
+      powerUp: () => a.powerUp(), walk: () => { a.walk(2, false, false); a.walk(2, true, true); }, speak: () => a.speak('Mind the ledger, love.', 200, true),
+    };
+    for (const [k, f] of Object.entries(calls)) { try { f(); } catch (e) { bad.push(k + ': ' + e.message); } }
+    return bad;
+  });
+  console.log('audio calls:', audioErrs.length ? audioErrs.join(' | ') : 'all ran without throwing');
   // real keyboard path: ask, look up, decide
   await p.keyboard.press('Digit1'); await p.keyboard.press('Digit2'); await p.keyboard.press('KeyZ');
   const before = await p.evaluate(() => window.__game.sim.state.history.length);

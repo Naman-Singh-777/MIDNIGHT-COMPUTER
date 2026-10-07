@@ -11,8 +11,8 @@ Open the printed address. Click Begin.
 
 ## Controls
 
-Desk: 1 to 5 ask, Z ledger lookup, X study the face, A admit, O hold, R refuse, L pull the lever, Q stand up.
-Floor: WASD move, Shift sprint, E interact (hold at the breaker), F flashlight, Q sit.
+Desk: 1 to 5 ask, Z ledger lookup, X study the face, A admit, O hold, R refuse, L pull the lever, C duck under the sill, right mouse leans in, Q stand up.
+Floor: WASD move, Shift sprint, C crouch, right mouse zoom, E interact (hold at the breaker), F flashlight, Q sit.
 F3 shows the performance panel. M mutes.
 
 URL options: `?seed=7` fixes the shift, `?autostart` skips the title, `?fast=6` speeds the clock.

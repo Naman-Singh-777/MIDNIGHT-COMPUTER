@@ -85,6 +85,15 @@ export class Game {
     window.addEventListener('resize', () => this.resize());
     this.drawCrt();
     this.drawSlip(null);
+    // the canvas textures need the fonts loaded before they can use them
+    void Promise.all([
+      document.fonts.load('26px VT323'),
+      document.fonts.load('14px "Special Elite"'),
+      document.fonts.load('italic 12px "IM Fell English"'),
+    ]).then(() => {
+      this.drawCrt();
+      this.drawSlip(this.sim.state.current);
+    });
 
     const qs = new URLSearchParams(location.search);
     this.speedUp = Math.max(1, Number(qs.get('fast')) || 1);
@@ -131,8 +140,9 @@ export class Game {
     const b = this.sim.bus;
     b.on('patientArrived', ({ patient }) => {
       this.patientsSeen++;
-      this.view.setPatient(patient);
+      this.view.setPatient(patient, this.sim.state.stage);
       this.audio.knock({ x: 0, y: 1.3, z: -8.2 }, 2);
+      setTimeout(() => this.audio.paper(), 4200);
       this.lightningT = Math.min(this.lightningT, 3);
     });
     b.on('patientLeft', ({ verdict }) => {
@@ -159,11 +169,30 @@ export class Game {
       this.hud.setTask(done ? '' : text);
       if (done) this.hud.subtitle('Task', text, 2500);
     });
-    b.on('story', ({ text, speaker }) => {
+    b.on('story', ({ text, speaker, call }) => {
       const who = speaker ?? 'Intercom';
       const v = SPEAKER_VOICE[who] ?? { pitch: 150, radio: true };
-      const dur = this.audio.speak(text, v.pitch, v.radio);
-      this.hud.subtitle(who, text, Math.max(4500, dur * 1000 + 800));
+      const speak = (): void => {
+        const dur = this.audio.speak(text, v.pitch, v.radio);
+        this.hud.subtitle(who, text, Math.max(4500, dur * 1000 + 800));
+      };
+      if (call) {
+        this.audio.phoneRing();
+        this.flickerPhone = 3;
+        this.hud.subtitle('Desk phone', 'It is ringing.', 2600);
+        this.pendingTimers.push(window.setTimeout(speak, 3800));
+      } else speak();
+    });
+    b.on('stare', ({ on, hit }) => {
+      this.view.setStare(on);
+      if (on && hit) this.audio.stareHit();
+      else if (on) {
+        this.audio.stareOn();
+        if (!this.stareHinted) {
+          this.stareHinted = true;
+          this.hud.subtitle('Your own handwriting', 'It is holding my eye. Look down. Or get under the sill.', 5200);
+        }
+      } else this.audio.stareOff(hit);
     });
     b.on('hallucination', ({ kind }) => {
       const behind = { x: this.player.camera.position.x, y: 1.5, z: this.player.camera.position.z + 2 };
@@ -212,12 +241,48 @@ export class Game {
       case 'drip_stop':
         this.sim.director.quiet = true;
         break;
+      case 'music_box':
+        this.audio.musicBox(inBooth ? { x: 0.8, y: 1.6, z: -5.2 } : { x: camX + 6, y: 1.2, z: 2.6 }, this.sim.state.stage);
+        break;
+      case 'scratch':
+        this.audio.scratch(inBooth ? { x: 1.85, y: 1.1, z: 0.1 } : { x: camX + 3.5, y: 1.0, z: -0.1 });
+        break;
+      case 'breath_behind':
+        this.audio.breathBehind();
+        break;
+      case 'window_tap':
+        this.audio.windowTap(inBooth ? WINDOW_POS : { x: 7.4, y: 1.6, z: 1.8 });
+        break;
+      case 'knob_rattle':
+        this.audio.knobRattle(inBooth ? { x: 1.8, y: 1.0, z: 0.85 } : { x: camX + 3, y: 1.0, z: 0.0 });
+        break;
+      case 'chair_creak':
+        this.audio.chairCreak();
+        break;
+      case 'overhead_steps':
+        this.audio.overheadSteps();
+        break;
+      case 'pipe_knock':
+        this.audio.pipeKnock({ x: camX + 5, y: 2.6, z: 0.4 });
+        break;
+      case 'child_hum':
+        this.audio.childHum({ x: 11, y: 0.9, z: 2.2 });
+        break;
+      case 'wheelchair':
+        this.audio.wheelchair({ x: 11, y: 0.3, z: 2.2 });
+        break;
+      case 'stage_up':
+        this.audio.stageUp(this.sim.state.stage / 7);
+        this.flickerT = Math.max(this.flickerT, 0.5);
+        break;
       case 'power_back':
       case 'power_out':
         break;
     }
   }
   private flickerPhone = 0;
+  private stareHinted = false;
+  private lastPace = 'calm';
 
   // ------------------------------------------------------------------ desk actions
   private ask(q: QuestionId): void {
@@ -227,7 +292,7 @@ export class Game {
     if (!r) return;
     this.hud.markAsked(q);
     this.hud.logLine('q', QUESTION_TEXT[q]);
-    this.audio.click();
+    this.audio.clack();
     const t = window.setTimeout(() => {
       const pitch = this.voicePitch(p);
       const dur = this.audio.speak(r.text, pitch, false, p.truth === 'understudy' && p.archetype === 'voice_mimic');
@@ -251,7 +316,7 @@ export class Game {
     }
     this.hud.setLedger(e, false, true);
     this.drawCrt(e);
-    this.audio.click();
+    this.audio.ding();
   }
 
   private face(): void {
@@ -295,7 +360,17 @@ export class Game {
       this.onKey(e.code);
     });
     window.addEventListener('keyup', (e) => this.input.keys.delete(e.code));
-    window.addEventListener('blur', () => this.input.keys.clear());
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('mousedown', (e) => {
+      if (e.button === 2) this.input.zoom = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 2) this.input.zoom = false;
+    });
+    window.addEventListener('blur', () => {
+      this.input.keys.clear();
+      this.input.zoom = false;
+    });
     window.addEventListener('mousemove', (e) => {
       this.input.mouseNX = e.clientX / window.innerWidth;
       this.input.mouseNY = e.clientY / window.innerHeight;
@@ -370,9 +445,9 @@ export class Game {
     g.fillRect(0, 0, 512, 384);
     if (this.sim.state.powerOn) {
       g.fillStyle = '#62ff9a';
-      g.font = 'bold 22px "Courier New", monospace';
+      g.font = '30px VT323, "Courier New", monospace';
       g.fillText('VESPER HOLLOW LEDGER', 24, 40);
-      g.font = '18px "Courier New", monospace';
+      g.font = '26px VT323, "Courier New", monospace';
       if (e) {
         const rows = [`REC  ${e.id}`, `NAME ${e.name}`, `BORN ${e.dob}`, `REF  ${e.sender}`, `KIN  ${e.kin}`, `BAND ${e.wristband}`, `FACE ${e.photoMark}`];
         if (e.note) rows.push(`NOTE ${e.note}`);
@@ -394,17 +469,17 @@ export class Game {
     g.fillRect(0, 0, 256, 320);
     if (p) {
       g.fillStyle = '#2a2018';
-      g.font = 'bold 15px Georgia';
-      g.fillText('ADMISSION SLIP', 60, 28);
-      g.font = 'italic 14px Georgia';
+      g.font = '15px "Special Elite", "Courier New", monospace';
+      g.fillText('ADMISSION SLIP  7-B', 40, 28);
+      g.font = '14px "Special Elite", "Courier New", monospace';
       const rows = [p.docs.slipName, p.docs.slipDob, p.docs.slipSender, p.docs.wristband, p.docs.photoMark];
       const lab = ['Name', 'Born', 'By', 'Band', 'Photo'];
       rows.forEach((r, i) => {
         g.fillStyle = '#6b5a45';
-        g.font = '11px Georgia';
+        g.font = 'italic 12px "IM Fell English", Georgia, serif';
         g.fillText(lab[i], 14, 66 + i * 44);
-        g.fillStyle = '#2a2018';
-        g.font = 'italic 14px Georgia';
+        g.fillStyle = '#16192a';
+        g.font = '14px "Special Elite", "Courier New", monospace';
         g.fillText(r.slice(0, 26), 14, 84 + i * 44);
       });
     }
@@ -451,6 +526,14 @@ export class Game {
     }
 
     const s = sim.state;
+    const seated = this.player.mode === 'desk';
+    sim.setDuck(seated && this.player.ducked);
+    sim.setGaze(seated && this.player.zoomed && s.phase === 'present');
+    const pace = sim.director.pace;
+    if (pace !== this.lastPace) {
+      if (pace === 'peak' && this.audio.ready) this.audio.riser(2.4);
+      this.lastPace = pace;
+    }
     const f = this.player.feet;
     sim.setZone(f.x > 12.4 ? 'breaker' : f.x > 2.0 ? 'corridor' : 'booth');
 
@@ -472,11 +555,11 @@ export class Game {
         fear: s.fear,
         zone: s.zone,
         power: s.powerOn,
-        quiet: sim.director.quiet,
+        quiet: sim.director.quiet || s.stare,
         sanity: s.sanity,
         rainGain: 0.55,
       });
-      if (this.player.stepDelta > 0) this.audio.walk(this.player.stepDelta, this.player.sprinting);
+      if (this.player.stepDelta > 0) this.audio.walk(this.player.stepDelta, this.player.sprinting, this.player.ducked);
     }
 
     this.hovered = this.running ? this.pickInteract() : null;

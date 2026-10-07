@@ -9,10 +9,15 @@ export interface InputState {
   mouseDY: number;
   mouseNX: number; // normalized cursor 0..1
   mouseNY: number;
+  zoom?: boolean;
 }
 
 const EYE_STAND = 1.62;
 const EYE_SEAT = 1.28;
+const EYE_DUCK = 0.6;
+const EYE_CROUCH = 1.05;
+const BASE_FOV = 70;
+const ZOOM_FOV = 44;
 const DESK_POS = new THREE.Vector3(0, 0, 0.5);
 
 export class PlayerController {
@@ -31,6 +36,12 @@ export class PlayerController {
   sprinting = false;
   private smoothYaw = 0;
   private smoothPitch = 0;
+  private staminaWait = 0;
+  private leanZ = 0;
+  private fov = BASE_FOV;
+  /** Seated: ducked under the sill. Standing: crouched. */
+  ducked = false;
+  zoomed = false;
 
   constructor(physics: Physics) {
     this.rig = physics.createPlayer(DESK_POS.x, 0.86, DESK_POS.z);
@@ -77,10 +88,17 @@ export class PlayerController {
     this.yaw = this.smoothYaw;
     this.pitch = this.smoothPitch;
     this.stamina = Math.min(1, this.stamina + dt * 0.4);
-    this.eyeY += (EYE_SEAT - this.eyeY) * Math.min(1, dt * 5);
+    this.ducked = input.keys.has('KeyC') || input.keys.has('ControlLeft') || input.keys.has('ControlRight');
+    this.zoomed = !this.ducked && !!input.zoom;
+    const eyeTarget = this.ducked ? EYE_DUCK : EYE_SEAT;
+    this.eyeY += (eyeTarget - this.eyeY) * Math.min(1, dt * (this.ducked ? 9 : 5));
     const breath = Math.sin(performance.now() * 0.0011) * 0.004;
-    this.camera.position.set(DESK_POS.x, this.eyeY + breath, DESK_POS.z);
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    // leaning toward the glass when zoomed
+    const lean = this.zoomed ? 0.32 : 0;
+    this.leanZ += (lean - this.leanZ) * Math.min(1, dt * 6);
+    this.camera.position.set(DESK_POS.x, this.eyeY + breath, DESK_POS.z - this.leanZ);
+    this.camera.rotation.set(this.ducked ? 0.1 : this.pitch, this.yaw, 0, 'YXZ');
+    this.applyFov(dt);
     this.stepDelta = 0;
     this.sprinting = false;
   }
@@ -95,10 +113,17 @@ export class PlayerController {
     const s = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
     const moving = f !== 0 || s !== 0;
     const wantSprint = k.has('ShiftLeft') || k.has('ShiftRight');
-    this.sprinting = wantSprint && moving && this.stamina > 0.05;
-    if (this.sprinting) this.stamina = Math.max(0, this.stamina - dt * 0.22);
-    else this.stamina = Math.min(1, this.stamina + dt * (moving ? 0.1 : 0.3));
-    const speed = this.sprinting ? 4.6 : 2.5;
+    this.ducked = k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight');
+    this.zoomed = !!input.zoom;
+    this.sprinting = wantSprint && moving && this.stamina > 0.05 && !this.ducked;
+    if (this.sprinting) {
+      this.stamina = Math.max(0, this.stamina - dt * 0.22);
+      this.staminaWait = 1.6; // regen pauses before it starts
+    } else {
+      this.staminaWait = Math.max(0, this.staminaWait - dt);
+      if (this.staminaWait <= 0) this.stamina = Math.min(1, this.stamina + dt * (moving ? 0.12 : 0.3));
+    }
+    const speed = this.ducked ? 1.3 : this.sprinting ? 4.6 : this.zoomed ? 1.6 : 2.5;
 
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
@@ -120,11 +145,25 @@ export class PlayerController {
     this.rig.body.setNextKinematicTranslation({ x: t.x + m.x, y: t.y + m.y, z: t.z + m.z });
     this.stepDelta = moving ? Math.hypot(m.x, m.z) : 0;
 
-    if (moving) this.bob += dt * (this.sprinting ? 11 : 7.5);
-    const bobY = moving ? Math.sin(this.bob) * (this.sprinting ? 0.045 : 0.025) : 0;
-    this.eyeY += (EYE_STAND - this.eyeY) * Math.min(1, dt * 5);
-    this.camera.position.set(t.x, t.y - 0.85 + this.eyeY + bobY, t.z);
-    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    // head bob: speed and amount depend on the movement state
+    const bobSpeed = this.ducked ? 6 : this.sprinting ? 12.5 : 8.5;
+    const bobAmt = this.ducked ? 0.012 : this.sprinting ? 0.05 : 0.026;
+    if (moving) this.bob += dt * bobSpeed;
+    const bobY = moving ? Math.sin(this.bob) * bobAmt : 0;
+    const bobX = moving ? Math.cos(this.bob * 0.5) * bobAmt * 0.5 : 0;
+    this.eyeY += ((this.ducked ? EYE_CROUCH : EYE_STAND) - this.eyeY) * Math.min(1, dt * 7);
+    this.camera.position.set(t.x + bobX * Math.cos(this.yaw), t.y - 0.85 + this.eyeY + bobY, t.z - bobX * Math.sin(this.yaw));
+    this.camera.rotation.set(this.pitch, this.yaw, moving ? Math.sin(this.bob * 0.5) * bobAmt * 0.25 : 0, 'YXZ');
+    this.applyFov(dt);
+  }
+
+  private applyFov(dt: number): void {
+    const target = this.zoomed ? ZOOM_FOV : this.sprinting ? BASE_FOV + 4 : BASE_FOV;
+    this.fov += (target - this.fov) * Math.min(1, dt * 8);
+    if (Math.abs(this.camera.fov - this.fov) > 0.05) {
+      this.camera.fov = this.fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   setAspect(a: number): void {
