@@ -1,5 +1,7 @@
 # Handoff for Claude Opus
 
+Full status report and phased roadmap: `docs/PROJECT_REPORT_AND_ROADMAP.md`. Read it first. This file is the short version.
+
 You are continuing a web horror game. Read this file first, then `CLAUDE.md`, then `docs/generated/PROJECT_STATE.md`. Do not restart anything. Build on what is here.
 
 Game: Asylum Intake: The Midnight Shift. Stack: TypeScript, Three.js, Vite, Rapier 3D, Web Audio. Repo: https://github.com/Naman-Singh-777/MIDNIGHT-COMPUTER. Local path on the owner's PC: `C:\Users\hp\OneDrive\Desktop\MidnightWeb`.

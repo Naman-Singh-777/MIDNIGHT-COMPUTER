@@ -13,3 +13,4 @@ Rules:
 8. Before finishing a change: `npm run typecheck`, `npm test`, `npm run build`, `node tools/smoke.mjs`.
 9. Remote: https://github.com/Naman-Singh-777/MIDNIGHT-COMPUTER. Use `git pull --ff-only` before pushing and confirm origin/main equals HEAD afterward. Never force push.
 10. Read `docs/HANDOFF_FOR_OPUS.md` first. It lists what is done and what is left.
+11. Full status and roadmap: `docs/PROJECT_REPORT_AND_ROADMAP.md`. Read it with the handoff.
