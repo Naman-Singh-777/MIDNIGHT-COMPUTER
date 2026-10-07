@@ -15,7 +15,7 @@ page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
 await page.goto('http://localhost:4174/?seed=3&autostart', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => !!window.__game, null, { timeout: 60000 });
-const kinds = [['plain','human',0],['chatty','human',0],['strange_innocent','human',0],['tragic','human',0],['slipping_mimic','understudy',4],['fluent_mimic','understudy',6],['voice_mimic','understudy',7]];
+const kinds = [['mother','understudy',4],['reveal','understudy',5],['plain','human',0],['chatty','human',0],['strange_innocent','human',0],['tragic','human',0],['slipping_mimic','understudy',4],['fluent_mimic','understudy',6],['voice_mimic','understudy',7]];
 for (const [arch, truth, stage] of kinds) {
   if (only && only !== arch) continue;
   for (const variant of [0, 1]) {
@@ -24,9 +24,11 @@ for (const [arch, truth, stage] of kinds) {
       g.player.update = () => {};
       g.hud.setMode?.(false);
       const names = variant ? 'Edith Quill' : 'Walter Quill';
-      const p = { id: 'T', archetype: arch, truth, registryId: 'R001', displayName: names, docs: {}, faceMark: 'a scar over the left brow', answers: {}, tells: [], quirk: '', hue: variant ? 0.62 : 0.17, height: 1, sprite: variant };
+      const special = arch === 'mother' || arch === 'reveal';
+      const p = { id: 'T', archetype: special ? 'fluent_mimic' : arch, truth, ...(arch === 'mother' ? { registryId: 'R209', displayName: 'Ada Wren' } : {}), registryId: arch === 'mother' ? 'R209' : 'R001', displayName: arch === 'mother' ? 'Ada Wren' : names, docs: {}, faceMark: 'a scar over the left brow', answers: {}, tells: [], quirk: '', hue: variant ? 0.62 : 0.17, height: 1, sprite: variant };
       g.view.setPatient(p, stage);
       g.view.group.position.set(0, 0, -2.45);
+      if (arch === 'reveal') g.view.revealing = 99;
       g.sim.state.phase = 'present';
       const c = g.player.camera;
       c.position.set(0.05, 1.5, -1.35);

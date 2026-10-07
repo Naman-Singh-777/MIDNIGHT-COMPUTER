@@ -283,3 +283,73 @@ describe('story beats', () => {
     expect(seen.find((x) => x.id === 'gaze')!.at).toBeGreaterThanOrEqual(38);
   });
 });
+
+describe('the list, Ward B and bed 9', () => {
+  it('shows jobs on time and marks the ones left too long as missed', () => {
+    const sim = new Simulation(5);
+    sim.tick(0.1);
+    expect(sim.todoItem('mop')!.shown).toBe(true);
+    expect(sim.todoItem('count1')!.shown).toBe(false);
+    expect(sim.completeTask('count1')).toBe(false);
+    expect(sim.completeTask('mop')).toBe(true);
+    expect(sim.completeTask('mop')).toBe(false);
+    while (sim.state.minute < 46) sim.tick(0.5);
+    expect(sim.todoItem('file')!.missed).toBe(true);
+    expect(sim.state.score.tasksDone).toBe(1);
+    expect(sim.state.score.tasksMissed).toBe(1);
+  });
+
+  it('every Understudy let through is an extra body on Ward B', () => {
+    const sim = new Simulation(11);
+    const p = runUntilPatient(sim, 'slipping_mimic');
+    expect(sim.wardCount().extras).toBe(0);
+    sim.verdict('admit');
+    expect(p.truth).toBe('understudy');
+    const c = sim.wardCount();
+    expect(c.extras).toBe(1);
+    expect(c.actual).toBe(c.register + 1);
+  });
+
+  it('the mother arrives at the glass while the ledger says she is in bed 9', () => {
+    const sim = new Simulation(3);
+    let mum: Patient | null = null;
+    for (let i = 0; i < 40000 && !mum; i++) {
+      sim.tick(0.1);
+      if (!sim.state.powerOn) {
+        sim.setZone('breaker');
+        sim.restorePower();
+        sim.setZone('booth');
+      }
+      const cur = sim.state.current;
+      if (cur && sim.state.phase === 'present') {
+        if (cur.registryId === 'R209') mum = cur;
+        else sim.verdict(cur.truth === 'human' ? 'admit' : 'contain');
+      }
+    }
+    expect(mum).not.toBeNull();
+    expect(mum!.truth).toBe('understudy');
+    expect(sim.lookup()!.note).toContain('BED 9');
+    sim.verdict('admit');
+    expect(sim.state.motherTaken).toBe(true);
+  });
+
+  it('the ending follows what got through and whether you went to her', () => {
+    const a = new Simulation(4);
+    a.finish();
+    expect(a.state.score.ending).toBe('absent');
+    const b = new Simulation(4);
+    while (b.state.minute < 287) {
+      b.tick(0.5);
+      if (!b.state.powerOn) {
+        b.setZone('breaker');
+        b.restorePower();
+        b.setZone('booth');
+      }
+      const cur = b.state.current;
+      if (cur && b.state.phase === 'present') b.verdict(cur.truth === 'human' ? 'admit' : 'contain');
+    }
+    expect(b.completeTask('count_dawn')).toBe(true);
+    b.finish();
+    expect(b.state.score.ending).toBe('clean');
+  });
+});

@@ -67,7 +67,31 @@ export interface ShiftSlot {
   archetype: Archetype;
   quirk?: string;
   story?: string;
+  special?: 'mother';
 }
+
+export type TaskId = 'mop' | 'file' | 'count1' | 'count_dawn';
+export interface TodoItem {
+  id: TaskId;
+  text: string;
+  where: string;
+  at: number;
+  due: number;
+  shown: boolean;
+  done: boolean;
+  missed: boolean;
+}
+
+/** What the Ward B slot shows. register is the paperwork, actual is the bodies. */
+export interface WardCount {
+  register: number;
+  actual: number;
+  extras: number;
+  motherTaken: boolean;
+  stage: number;
+}
+
+export type Ending = 'clean' | 'crowded' | 'taken' | 'absent';
 
 export type ConsequenceKind =
   | 'ward_incident' // admitted an understudy
@@ -121,6 +145,8 @@ export type SimEvents = {
   stare: { on: boolean; hit: boolean };
   hallucination: { kind: 'phantom_step' | 'phantom_knock' | 'whisper_name' | 'shadow_figure' };
   shiftEnded: { score: ShiftScore };
+  todo: { items: TodoItem[] };
+  wardCounted: { id: TaskId; count: WardCount };
 };
 
 export interface ShiftScore {
@@ -129,4 +155,7 @@ export interface ShiftScore {
   admittedUnderstudies: number;
   refusedHumans: number;
   sanity: number;
+  ending: Ending;
+  tasksDone: number;
+  tasksMissed: number;
 }

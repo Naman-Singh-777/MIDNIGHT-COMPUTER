@@ -13,5 +13,5 @@ export const SHIFT00: ShiftSlot[] = [
   { at: 132, archetype: 'tragic', quirk: 'Asks if the children\'s ward is on this floor. Holds a knitted cap with no child in it.' },
   { at: 162, archetype: 'slipping_mimic', quirk: 'Very calm. Repeats back what you say, softly, like practising.' },
   { at: 198, archetype: 'fluent_mimic', quirk: 'Almost perfect. Tells a story you think you have heard before.' },
-  { at: 232, archetype: 'chatty', quirk: 'A night cook who wants to know whether the ward gets soup. Quietly terrified of the corridor.' },
+  { at: 232, archetype: 'fluent_mimic', special: 'mother', quirk: 'Your mother, barefoot in a ward cardigan, on the wrong side of the glass. She has never once been this calm.' },
 ];

@@ -5,7 +5,7 @@ import { DrawSurface, StaticBatch, makeMaterials, type Mats } from './materials'
 import { Rain } from './rain';
 
 export interface Interact {
-  id: 'door' | 'lever' | 'breaker' | 'chair' | 'phone' | 'prop';
+  id: 'door' | 'lever' | 'breaker' | 'chair' | 'phone' | 'prop' | 'stain' | 'cabinet' | 'wardslot';
   prompt: string;
   range: number;
 }

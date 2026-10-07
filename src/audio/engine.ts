@@ -596,6 +596,126 @@ export class AudioEngine {
   }
 
   /** Stylised speech: syllable blips with a formant sweep. Returns duration in seconds. */
+  // ---------------------------------------------------------------- real voices and the wrong ones
+  /** Use the system's speech voices when there are any. Blips stay as the fallback. */
+  useTts = true;
+  private pickVoice(female: boolean): SpeechSynthesisVoice | null {
+    if (typeof speechSynthesis === 'undefined') return null;
+    const vs = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en'));
+    if (!vs.length) return null;
+    const fem = /female|zira|hazel|susan|libby|sonia|aria|jenny|samantha|karen|moira|tessa|fiona|serena|victoria|kate/i;
+    const gb = vs.filter((v) => /GB|IE/.test(v.lang));
+    const pool = (gb.length ? gb : vs).filter((v) => fem.test(v.name) === female);
+    return pool[0] ?? (gb[0] || vs[0]);
+  }
+
+  /**
+   * A person speaking. kind 'staff' and 'call' come through the phone or the intercom.
+   * 'mimic' is pitched down, slowed and has a low drone and a whisper riding under it.
+   */
+  voice(text: string, o: { pitch: number; radio: boolean; female: boolean; mimic?: number }): number {
+    const mimic = o.mimic ?? 0;
+    const voice = this.useTts && !this.muted ? this.pickVoice(o.female) : null;
+    if (!voice) return this.speak(text, o.pitch, o.radio, mimic > 0.6);
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = voice;
+    const base = o.female ? 1.05 : 0.85;
+    u.pitch = Math.max(0, Math.min(2, mimic > 0 ? base - 0.35 - mimic * 0.45 : base + (o.pitch - 150) / 400));
+    u.rate = mimic > 0 ? 0.86 - mimic * 0.08 : o.radio ? 1.02 : 0.95;
+    u.volume = 0.95;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+    const dur = text.split(/\s+/).length * 0.36 / u.rate + 0.4;
+    this.duck = Math.max(this.duck, dur);
+    const ctx = this.ctx;
+    if (ctx && o.radio) {
+      this.noiseHit(2600, 0.06, 0.22, 0.003, null, 'bandpass');
+      const h = ctx.createBufferSource();
+      h.buffer = this.white;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1800;
+      const g = ctx.createGain();
+      g.gain.value = 0.03;
+      h.connect(bp).connect(g).connect(this.voiceBus);
+      h.start(ctx.currentTime, 0, Math.min(9, dur));
+      setTimeout(() => this.noiseHit(2200, 0.05, 0.18, 0.002, null, 'bandpass'), dur * 1000);
+    }
+    if (ctx && mimic > 0) this.wrongUnder(dur, mimic);
+    return dur;
+  }
+
+  stopVoice(): void {
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+  }
+
+  /** The thing under the Understudy's voice: a low ring-modulated drone that breathes with it. */
+  private wrongUnder(dur: number, amount: number): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    const car = ctx.createOscillator();
+    car.type = 'sawtooth';
+    car.frequency.value = 46;
+    const mod = ctx.createOscillator();
+    mod.frequency.value = 7.3;
+    const ring = ctx.createGain();
+    ring.gain.value = 0;
+    mod.connect(ring.gain);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 320;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.06 + amount * 0.1, t + 0.4);
+    g.gain.setValueAtTime(0.06 + amount * 0.1, t + dur);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.8);
+    car.connect(ring).connect(lp).connect(g).connect(this.voiceBus);
+    car.start(t);
+    mod.start(t);
+    car.stop(t + dur + 1);
+    mod.stop(t + dur + 1);
+    if (amount > 0.5) setTimeout(() => this.whisper({ x: this.listenerPos.x + 0.4, y: 1.5, z: this.listenerPos.z - 0.2 }, 0.12), 300);
+  }
+
+  /** Emergency broadcast tones through the intercom, then dead air. Used when the Understudy goes up a stage late in the night. */
+  broadcast(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 900;
+    bp.Q.value = 0.7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.05);
+    g.gain.setValueAtTime(0.16, t + 2.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+    for (const f of [853, 960]) {
+      const o = ctx.createOscillator();
+      o.frequency.value = f;
+      o.connect(bp);
+      o.start(t);
+      o.stop(t + 2.9);
+    }
+    bp.connect(g).connect(this.voiceBus);
+    this.noiseHit(1500, 2.2, 0.08, 0.02, null, 'bandpass');
+    this.duck = Math.max(this.duck, 4);
+  }
+
+  scrub(): void {
+    if (!this.ctx) return;
+    this.noiseHit(700 + Math.random() * 500, 0.22, 0.07, 0.05, null, 'bandpass');
+  }
+
+  /** A tear in the picture: one short crushed burst. Plays when the face slips. */
+  glitch(): void {
+    if (!this.ctx) return;
+    this.noiseHit(5200, 0.09, 0.2, 0.002, null, 'highpass');
+    this.tone(1900, 0.07, 0.07, 'square', null, 120);
+    this.tone(62, 0.35, 0.22, 'sine', null, 38, 0.02);
+  }
+
   speak(text: string, pitch: number, radio: boolean, mimic = false): number {
     const ctx = this.ctx;
     if (!ctx) return Math.min(6, text.length * 0.05);

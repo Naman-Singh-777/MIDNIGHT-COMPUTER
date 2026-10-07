@@ -5,15 +5,82 @@ import { PAUSE_HTML, SPEAKER_VOICE, TITLE_HTML, endHtml, greeting } from './data
 import { Physics } from './physics/world';
 import { PlayerController, type InputState } from './player/controller';
 import { buildEnvironment, type Env, type Interact } from './render/environment';
-import { PatientView } from './render/patientView';
+import { FEMALE_NAMES, PatientView } from './render/patientView';
+import { FilingGame, WardView } from './ui/minigames';
+import { drawFace } from './render/faces';
 import { Post } from './render/post';
 import { loadSave, writeSave } from './save/save';
 import { Simulation } from './sim/simulation';
 import { QUESTION_TEXT } from './sim/patients';
-import type { DirectorCue, Patient, QuestionId, Verdict } from './sim/types';
+import type { DirectorCue, Ending, Patient, QuestionId, TodoItem, Verdict } from './sim/types';
 import { Hud, formatClock } from './ui/hud';
 
 const WINDOW_POS = { x: 0, y: 1.4, z: -1.5 };
+const WARD_B_DOOR = { x: 8.6, y: 1.5, z: 1.7 };
+const STAIN_POS = { x: 6.7, z: 1.0 };
+const FEMALE_STAFF = new Set(['Sister Imogen', 'Night Nurse Kessler', "Matron's Office", 'Ada Wren']);
+
+/** Builds a canvas texture of something dark that was dragged toward the Ward B door. */
+function stainTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  let seed = 77;
+  const R = (): number => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 40; i++) {
+    const x = 120 + R() * 110, y = 90 + R() * 80, r = 14 + R() * 40;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(48,8,6,0.9)');
+    gr.addColorStop(0.7, 'rgba(60,12,8,0.75)');
+    gr.addColorStop(1, 'rgba(60,12,8,0)');
+    g.fillStyle = gr;
+    g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  // drag marks toward the ward door, fading
+  for (let k = 0; k < 4; k++) {
+    g.strokeStyle = `rgba(55,10,8,${0.5 - k * 0.08})`;
+    g.lineWidth = 6 + R() * 8;
+    g.beginPath();
+    g.moveTo(200, 110 + k * 12);
+    g.bezierCurveTo(300, 100 + k * 14, 380, 130 + k * 10, 500, 120 + k * 16);
+    g.stroke();
+  }
+  // a hand, flat, where someone tried to hold on
+  g.fillStyle = 'rgba(40,6,4,0.85)';
+  g.beginPath();
+  g.ellipse(330, 70, 16, 20, 0.3, 0, 7);
+  g.fill();
+  for (let f = 0; f < 4; f++) {
+    g.beginPath();
+    g.ellipse(316 + f * 9, 44 - Math.abs(f - 1.5) * 4, 3.5, 11, 0.15 * (f - 1.5), 0, 7);
+    g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function signTexture(text: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#d9d0b4';
+  g.fillRect(0, 0, 256, 64);
+  g.fillStyle = 'rgba(60,40,20,0.25)';
+  for (let i = 0; i < 300; i++) g.fillRect(Math.random() * 256, Math.random() * 64, 2, 2);
+  g.fillStyle = '#1d1a16';
+  g.font = '34px "Special Elite", "Courier New", monospace';
+  g.textAlign = 'center';
+  g.fillText(text, 128, 44);
+  g.strokeStyle = '#1d1a16';
+  g.lineWidth = 3;
+  g.strokeRect(5, 5, 246, 54);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
 export class Game {
   readonly sim: Simulation;
@@ -63,7 +130,12 @@ export class Game {
     this.env = buildEnvironment(physics);
     this.player = new PlayerController(physics);
     this.view = new PatientView(this.env.patientSpawn, this.env.patientStand);
-    this.env.scene.add(this.view.group);
+    this.env.scene.add(this.view.group, this.view.rig);
+    this.view.onGlimpse = () => {
+      this.audio.glitch();
+      this.flashV = Math.max(this.flashV, 0.15);
+    };
+    this.buildTaskProps();
     this.env.scene.add(this.player.camera);
 
     this.flashlight = new THREE.SpotLight(0xfff0d8, 0, 14, 0.42, 0.55, 1.6);
@@ -77,6 +149,7 @@ export class Game {
       verdict: (v) => this.doVerdict(v),
       begin: () => this.begin(),
     });
+    this.hud.setTodo(this.sim.state.todo);
     this.hud.overlay(TITLE_HTML);
     this.hud.setMode(true);
     this.bindSim();
@@ -112,6 +185,7 @@ export class Game {
   // ------------------------------------------------------------------ lifecycle
   private begin(): void {
     this.audio.start();
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.getVoices();
     this.hud.overlay(null);
     this.running = true;
     if (!this.began) {
@@ -124,6 +198,7 @@ export class Game {
   private pause(): void {
     if (!this.running || this.ended) return;
     this.running = false;
+    this.audio.stopVoice();
     this.hud.overlay(PAUSE_HTML);
   }
 
@@ -167,13 +242,16 @@ export class Game {
     });
     b.on('taskChanged', ({ text, done }) => {
       this.hud.setTask(done ? '' : text);
-      if (done) this.hud.subtitle('Task', text, 2500);
+      if (done) {
+        this.hud.subtitle('Task', text, 2500);
+        this.refreshTaskLine(this.sim.state.todo);
+      }
     });
     b.on('story', ({ text, speaker, call }) => {
       const who = speaker ?? 'Intercom';
       const v = SPEAKER_VOICE[who] ?? { pitch: 150, radio: true };
       const speak = (): void => {
-        const dur = this.audio.speak(text, v.pitch, v.radio);
+        const dur = this.audio.voice(text, { pitch: v.pitch, radio: v.radio, female: FEMALE_STAFF.has(who), mimic: who === 'Ada Wren' ? 0.35 : 0 });
         this.hud.subtitle(who, text, Math.max(4500, dur * 1000 + 800));
       };
       if (call) {
@@ -183,9 +261,21 @@ export class Game {
         this.pendingTimers.push(window.setTimeout(speak, 3800));
       } else speak();
     });
+    b.on('todo', ({ items }) => {
+      this.hud.setTodo(items);
+      this.refreshTaskLine(items);
+    });
+    b.on('wardCounted', ({ id, count }) => {
+      if (id === 'count1') this.hud.subtitle('Your own handwriting', `Ward B, 00:30. Register ${count.register}. I counted ${this.lastTally}.`, 5200);
+    });
     b.on('stare', ({ on, hit }) => {
       this.view.setStare(on);
-      if (on && hit) this.audio.stareHit();
+      if (on && hit) {
+        this.audio.stareHit();
+        this.audio.glitch();
+        this.view.revealing = 1.3;
+        this.flashV = Math.max(this.flashV, 0.35);
+      }
       else if (on) {
         this.audio.stareOn();
         if (!this.stareHinted) {
@@ -273,6 +363,7 @@ export class Game {
         break;
       case 'stage_up':
         this.audio.stageUp(this.sim.state.stage / 7);
+        if (this.sim.state.stage >= 4) this.pendingTimers.push(window.setTimeout(() => this.audio.broadcast(), 2200));
         this.flickerT = Math.max(this.flickerT, 0.5);
         break;
       case 'power_back':
@@ -294,8 +385,7 @@ export class Game {
     this.hud.logLine('q', QUESTION_TEXT[q]);
     this.audio.clack();
     const t = window.setTimeout(() => {
-      const pitch = this.voicePitch(p);
-      const dur = this.audio.speak(r.text, pitch, false, p.truth === 'understudy' && p.archetype === 'voice_mimic');
+      const dur = this.say(p, r.text);
       this.view.speaking = dur;
       this.hud.logLine('a', `"${r.text}"`);
       this.hud.subtitle(p.displayName, r.text, Math.max(3500, dur * 1000 + 600));
@@ -305,6 +395,13 @@ export class Game {
 
   private voicePitch(p: Patient): number {
     return p.archetype === 'voice_mimic' ? 208 : 105 + p.hue * 110;
+  }
+
+  /** A patient speaking through the glass. The Understudy's voice sinks as it learns. */
+  private say(p: Patient, text: string): number {
+    const female = FEMALE_NAMES.has(p.displayName.split(' ')[0] ?? '') || p.archetype === 'voice_mimic' || p.archetype === 'tragic';
+    const mimic = p.truth === 'understudy' ? (p.archetype === 'voice_mimic' ? 1 : Math.min(0.9, 0.15 + this.sim.state.stage * 0.1)) : 0;
+    return this.audio.voice(text, { pitch: this.voicePitch(p), radio: false, female, mimic });
   }
 
   private lookup(): void {
@@ -356,7 +453,8 @@ export class Game {
         this.save.muted = this.audio.muted;
         writeSave(this.save);
       }
-      if (!this.running) return;
+      if (!this.running || this.mini) return;
+      if (e.code === 'Tab') e.preventDefault();
       this.onKey(e.code);
     });
     window.addEventListener('keyup', (e) => this.input.keys.delete(e.code));
@@ -380,13 +478,13 @@ export class Game {
       }
     });
     this.canvas.addEventListener('click', () => {
-      if (!this.running) return;
+      if (!this.running || this.mini) return;
       if (this.player.mode === 'floor') {
         if (document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock?.();
       } else if (this.hovered?.id === 'lever') this.doVerdict('contain');
     });
     document.addEventListener('pointerlockchange', () => {
-      if (this.player.mode === 'floor' && this.running && document.pointerLockElement !== this.canvas) this.pause();
+      if (this.player.mode === 'floor' && this.running && !this.mini && document.pointerLockElement !== this.canvas) this.pause();
     });
   }
 
@@ -401,6 +499,7 @@ export class Game {
       else if (code === 'KeyO') this.doVerdict('observe');
       else if (code === 'KeyR') this.doVerdict('refuse');
       else if (code === 'KeyL') this.doVerdict('contain');
+      else if (code === 'Tab') this.hud.toggleAside();
       else if (code === 'KeyQ') {
         this.player.stand();
         this.hud.setMode(false);
@@ -434,7 +533,132 @@ export class Game {
       this.sim.setFlashlight(false);
     } else if (h.id === 'lever') {
       this.doVerdict('contain');
+    } else if (h.id === 'cabinet') {
+      const t = this.sim.todoItem('file');
+      if (!t || t.done) {
+        this.hud.subtitle('Filing cabinet', 'Last week is filed. One drawer will not quite shut.', 2600);
+        return;
+      }
+      this.openMini();
+      this.mini = new FilingGame(
+        this.root,
+        (k) => (k === 'drawer' ? this.audio.clack() : k === 'paper' ? this.audio.paper() : k === 'sting' ? this.audio.glitch() : this.audio.click()),
+        (finished) => {
+          this.closeMini();
+          if (finished) {
+            this.sim.completeTask('file');
+            this.pendingTimers.push(window.setTimeout(() => this.audio.chairCreak(), 900));
+          }
+        },
+      );
+    } else if (h.id === 'wardslot') {
+      this.useWardSlot();
     }
+  }
+
+  // ------------------------------------------------------------------ jobs away from the glass
+  private mini: { close(finished: boolean): void } | null = null;
+  private mopProgress = 0;
+  private mopScared = false;
+  private scrubT = 0;
+  private lastTally = 0;
+  private stain!: THREE.Mesh;
+  private get root(): HTMLElement {
+    return this.canvas.parentElement as HTMLElement;
+  }
+
+  private openMini(): void {
+    document.exitPointerLock?.();
+    this.input.keys.clear();
+  }
+
+  private closeMini(): void {
+    this.mini = null;
+    this.input.keys.clear();
+    if (this.running && this.player.mode === 'floor') this.hud.subtitle('', 'Click to carry on.', 2500);
+  }
+
+  private wardEnding(): Ending {
+    const s = this.sim.state;
+    return s.motherTaken ? 'taken' : s.score.admittedUnderstudies > 0 ? 'crowded' : 'clean';
+  }
+
+  private useWardSlot(): void {
+    const c1 = this.sim.todoItem('count1')!;
+    const dawn = this.sim.todoItem('count_dawn')!;
+    const mode = dawn.shown && !dawn.done ? 'dawn' : c1.shown && !c1.done && !c1.missed ? 'count1' : null;
+    if (!mode) {
+      this.hud.subtitle('Ward B', 'The slot is shut from the inside. You can hear eleven people breathing. You think it is eleven.', 3800);
+      return;
+    }
+    this.openMini();
+    const count = this.sim.wardCount();
+    this.mini = new WardView(
+      this.root,
+      mode,
+      count,
+      this.wardEnding(),
+      (k) => {
+        if (k === 'tick') this.audio.click();
+        else if (k === 'scare') {
+          this.audio.glitch();
+          this.audio.stareHit();
+        } else if (k === 'breath') this.audio.breathBehind();
+        else this.audio.glitch();
+      },
+      (finished, tally) => {
+        this.closeMini();
+        if (!finished) return;
+        this.lastTally = tally;
+        this.sim.completeTask(mode === 'dawn' ? 'count_dawn' : 'count1');
+        if (mode === 'dawn') this.sim.finish();
+      },
+      this.motherReveal(),
+    );
+  }
+
+  /** Her face, painted the way the Understudy wears it. Used once, at the Ward B slot. */
+  private motherReveal(): HTMLCanvasElement {
+    const look = { female: true, age: 64, skin: [236, 204, 180] as [number, number, number], hair: 'bun', hairColor: '#b8b4aa', eye: '#2f4a6a', glasses: false, stubble: false };
+    const fake = { truth: 'understudy', hue: 0.31, faceMark: 'a freckle under the left eye' } as Patient;
+    const t = drawFace(look, fake, 7, 'reveal');
+    const img = t.image as HTMLCanvasElement;
+    t.dispose();
+    return img;
+  }
+
+  private refreshTaskLine(items: TodoItem[]): void {
+    const open = items.filter((t) => t.shown && !t.done && !t.missed);
+    if (this.sim.state.powerOn || !this.sim.state.breakerTripped) this.hud.setTask(open.length ? `To do: ${open.map((t) => t.text.split('.')[0].toLowerCase()).join('; ')}.` : '');
+  }
+
+  /** The stain, the Ward B sign and slot, and the cabinet's hit box. Props only, at the task spots. */
+  private buildTaskProps(): void {
+    const env = this.env;
+    const stainMat = new THREE.MeshLambertMaterial({ map: stainTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    this.stain = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.85), stainMat);
+    this.stain.rotation.x = -Math.PI / 2;
+    this.stain.position.set(STAIN_POS.x + 0.35, 0.004, STAIN_POS.z);
+    this.stain.userData.interact = { id: 'stain', prompt: 'Stain', range: 2.2 } satisfies Interact;
+    env.scene.add(this.stain);
+    const hit = (id: Interact['id'], w: number, h: number, d: number, x: number, y: number, z: number, range: number): void => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial({ visible: false }));
+      m.position.set(x, y, z);
+      m.userData.interact = { id, prompt: id, range } satisfies Interact;
+      env.scene.add(m);
+      env.interactables.push(m);
+    };
+    env.interactables.push(this.stain);
+    hit('cabinet', 0.6, 1.25, 0.7, -1.45, 0.6, 1.4, 2.2);
+    hit('wardslot', 0.9, 2.0, 0.25, WARD_B_DOOR.x, 1.05, 1.72, 2.4);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.155), new THREE.MeshLambertMaterial({ map: signTexture('WARD  B') }));
+    sign.position.set(WARD_B_DOOR.x, 2.28, 1.775);
+    sign.rotation.y = Math.PI;
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.07, 0.03), new THREE.MeshLambertMaterial({ color: 0x0a0a0b }));
+    slot.position.set(WARD_B_DOOR.x, 1.55, 1.78);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.01), env.mats.brass);
+    plate.position.set(WARD_B_DOOR.x, 1.55, 1.787);
+    env.scene.add(sign, slot, plate);
   }
 
   // ------------------------------------------------------------------ drawing
@@ -520,6 +744,7 @@ export class Game {
       for (let i = 0; i < this.speedUp; i++) sim.tick(dt);
       const steps = this.clock.advance(dt);
       for (let i = 0; i < steps; i++) this.physics.step();
+      this.mopTick(dt);
       this.player.update(dt, this.input, document.pointerLockElement === this.canvas);
     } else {
       this.player.update(0, this.input, false);
@@ -574,13 +799,39 @@ export class Game {
   }
   private lastMs = 0;
 
+  /** Mopping: hold E on the stain and scrub with the mouse. The view stays put while you scrub. */
+  private mopTick(dt: number): void {
+    const t = this.sim.todoItem('mop');
+    if (!t || t.done || this.hovered?.id !== 'stain' || !this.input.keys.has('KeyE') || this.player.mode !== 'floor') return;
+    const motion = Math.abs(this.input.mouseDX) + Math.abs(this.input.mouseDY);
+    this.input.mouseDX = 0;
+    this.input.mouseDY = 0;
+    if (motion < 2) return;
+    this.mopProgress = Math.min(1, this.mopProgress + Math.min(0.03, motion * 0.0006));
+    (this.stain.material as THREE.MeshLambertMaterial).opacity = 1 - this.mopProgress * 0.85;
+    this.scrubT -= dt;
+    if (this.scrubT <= 0) {
+      this.scrubT = 0.28;
+      this.audio.scrub();
+    }
+    if (this.mopProgress > 0.6 && !this.mopScared) {
+      // somebody on the other side of the Ward B door tries the handle while your back is to it
+      this.mopScared = true;
+      this.audio.knobRattle(WARD_B_DOOR);
+      this.figureT = 1.6;
+    }
+    if (this.mopProgress >= 1) {
+      this.sim.completeTask('mop');
+      this.hud.subtitle('Your own handwriting', 'Not rust. Rust does not have fingers.', 3600);
+    }
+  }
+
   private onPatientPresent(p: Patient): void {
     this.hud.showPatient(p);
     this.drawSlip(p);
     this.drawCrt();
     const line = greeting(p, this.patientsSeen);
-    const pitch = this.voicePitch(p);
-    const dur = this.audio.speak(line, pitch, false, p.archetype === 'voice_mimic');
+    const dur = this.say(p, line);
     this.view.speaking = dur;
     this.hud.subtitle(p.displayName, line, Math.max(4000, dur * 1000 + 700));
   }
@@ -679,6 +930,20 @@ export class Game {
       return;
     }
     this.breakerHold = 0;
+    if (h?.id === 'stain') {
+      const t = this.sim.todoItem('mop');
+      if (!t || t.done) this.hud.prompt('It has dried into the grout');
+      else this.hud.prompt('Hold E and move the mouse: mop', this.mopProgress);
+      return;
+    }
+    if (h?.id === 'cabinet') {
+      this.hud.prompt('E: file last week\'s slips');
+      return;
+    }
+    if (h?.id === 'wardslot') {
+      this.hud.prompt('E: look through the Ward B slot');
+      return;
+    }
     if (h?.id === 'door') this.hud.prompt(`E: ${this.env.boothDoor.open ? 'close' : 'open'} the booth door`);
     else if (h?.id === 'chair') this.hud.prompt('E: sit at the desk');
     else if (h?.id === 'lever') this.hud.prompt('E: pull the containment lever');

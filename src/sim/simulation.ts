@@ -2,6 +2,7 @@ import { Bus } from '../core/events';
 import { Rng } from '../core/rng';
 import { SHIFT00, SHIFT00_BREAKER_AT, SHIFT00_END, SHIFT00_FINALE_AT } from '../data/shift00';
 import { BEATS } from '../data/story';
+import { MOTHER_ENTRY, MOTHER_ID, TODO, WARD_B_START } from '../data/motive';
 import { Director } from './director';
 import { distortionFor } from './perception';
 import { QUESTION_TEXT, makePatient, makeRegistry } from './patients';
@@ -11,6 +12,9 @@ import type {
   QuestionId,
   RegistryEntry,
   ShiftScore,
+  TaskId,
+  TodoItem,
+  WardCount,
   SimEvents,
   Verdict,
 } from './types';
@@ -48,6 +52,9 @@ export interface SimState {
   stare: boolean; // the patient is holding your eye
   score: ShiftScore;
   seq: number;
+  todo: TodoItem[];
+  admittedHumans: number;
+  motherTaken: boolean;
 }
 
 export interface AskResult {
@@ -85,7 +92,7 @@ export class Simulation {
       breakerTripped: false,
       zone: 'booth',
       flashlight: false,
-      registry: makeRegistry(this.rng, 14),
+      registry: [...makeRegistry(this.rng, 14), { ...MOTHER_ENTRY }],
       current: null,
       phase: 'none',
       phaseTime: 0,
@@ -103,8 +110,11 @@ export class Simulation {
       sanity: 100,
       fear: 0,
       stare: false,
-      score: { correct: 0, wrong: 0, admittedUnderstudies: 0, refusedHumans: 0, sanity: 100 },
+      score: { correct: 0, wrong: 0, admittedUnderstudies: 0, refusedHumans: 0, sanity: 100, ending: 'absent', tasksDone: 0, tasksMissed: 0 },
       seq: 0,
+      todo: TODO.map((t) => ({ ...t, shown: false, done: false, missed: false })),
+      admittedHumans: 0,
+      motherTaken: false,
     };
   }
 
@@ -127,6 +137,7 @@ export class Simulation {
     s.fear = Math.max(0, s.fear - dt * 0.15);
     this.updateSanity(dt);
     this.runStory();
+    this.runTodo();
     this.runStare(dt);
     this.runBreaker();
     this.runPatients(dt);
@@ -134,11 +145,76 @@ export class Simulation {
     this.runDirector(dt);
     this.runHallucinations(dt);
 
-    if (s.minute >= SHIFT00_END && !s.ended) {
-      s.ended = true;
-      s.score.sanity = Math.round(s.sanity);
-      this.bus.emit('shiftEnded', { score: s.score });
+    if (s.minute >= SHIFT00_END && !s.ended) this.finish();
+  }
+
+  /** Ends the night. The ending depends on what got through the gate and whether you went to see her. */
+  finish(): void {
+    const s = this.state;
+    if (s.ended) return;
+    s.ended = true;
+    const dawn = s.todo.find((t) => t.id === 'count_dawn')!;
+    s.score.sanity = Math.round(s.sanity);
+    s.score.ending = !dawn.done ? 'absent' : s.motherTaken ? 'taken' : s.score.admittedUnderstudies > 0 ? 'crowded' : 'clean';
+    this.bus.emit('shiftEnded', { score: s.score });
+  }
+
+  // ---------------------------------------------------------------- the to-do list
+  private runTodo(): void {
+    const s = this.state;
+    let changed = false;
+    for (const t of s.todo) {
+      if (!t.shown && s.minute >= t.at) {
+        t.shown = true;
+        changed = true;
+      }
+      if (t.shown && !t.done && !t.missed && s.minute >= t.due && t.id !== 'count_dawn') {
+        t.missed = true;
+        changed = true;
+        s.score.tasksMissed++;
+        this.spike(0.15, 4);
+        const line =
+          t.id === 'count1'
+            ? 'Pell. Nobody did the half past twelve count. So nobody knows how many are in there. I am not going to be the one who checks.'
+            : "Matron's office. Your list was on the desk, Officer. It is still on the desk.";
+        this.say(`miss_${t.id}`, line, t.id === 'count1' ? 'Orderly Pell' : "Matron's Office");
+      }
     }
+    if (changed) this.bus.emit('todo', { items: s.todo });
+  }
+
+  /** Bodies on Ward B against the paperwork. Every Understudy you admitted is lying in a bed. */
+  wardCount(): WardCount {
+    const s = this.state;
+    const register = WARD_B_START + s.admittedHumans;
+    const extras = s.score.admittedUnderstudies;
+    return { register, actual: register + extras, extras, motherTaken: s.motherTaken, stage: s.stage };
+  }
+
+  /** The presentation finished a task's mini game. Returns false if it is not on the list yet. */
+  completeTask(id: TaskId): boolean {
+    const s = this.state;
+    const t = s.todo.find((x) => x.id === id);
+    if (!t || !t.shown || t.done || s.ended) return false;
+    t.done = true;
+    if (!t.missed) s.score.tasksDone++;
+    s.sanity = clamp(s.sanity + 3, 0, 100);
+    this.bus.emit('todo', { items: s.todo });
+    if (id === 'count1' || id === 'count_dawn') {
+      const count = this.wardCount();
+      this.bus.emit('wardCounted', { id, count });
+      if (id === 'count1') {
+        if (count.extras > 0) {
+          this.spike(0.6, 8);
+          this.say('count1_res', `You got ${count.actual}? The register says ${count.register}. Do not count again. Come back to the desk and do not count again.`, 'Orderly Pell', true);
+        } else this.say('count1_res', `${count.register}. Same as my sheet. Good. I will stop counting now.`, 'Orderly Pell', true);
+      }
+    }
+    return true;
+  }
+
+  todoItem(id: TaskId): TodoItem | undefined {
+    return this.state.todo.find((t) => t.id === id);
   }
 
   private updateSanity(dt: number): void {
@@ -299,7 +375,7 @@ export class Simulation {
         const slot = SHIFT00[s.slotIndex];
         if (slot && s.minute >= slot.at) {
           s.slotIndex++;
-          this.spawn(this.makeFromSlot(slot.archetype, slot.quirk ?? ''));
+          this.spawn(slot.special === 'mother' ? this.makeMother(slot.quirk ?? '') : this.makeFromSlot(slot.archetype, slot.quirk ?? ''));
         }
       }
     } else if (s.phase === 'approaching' && s.phaseTime > 3.5) {
@@ -318,13 +394,32 @@ export class Simulation {
   private makeFromSlot(archetype: Patient['archetype'], quirk: string): Patient {
     const s = this.state;
     const used = new Set(s.history.map((p) => p.registryId));
-    const pool = s.registry.filter((r) => !used.has(r.id) && !s.queue.some((q) => q.registryId === r.id));
+    const pool = s.registry.filter((r) => r.id !== MOTHER_ID && r.id !== 'R900' && !used.has(r.id) && !s.queue.some((q) => q.registryId === r.id));
     const entry = pool[this.rng.int(0, pool.length - 1)];
     if (archetype === 'tragic') {
       entry.kin = `${entry.name.split(' ')[0]} Jr.`;
       entry.note = 'Next of kin deceased, 1958.';
     }
     return makePatient({ rng: this.rng, entry, archetype, stage: s.stage, previous: s.history, quirk, seq: ++s.seq });
+  }
+
+  /** Her face, her name, her wristband. But the ledger says she has not left her bed, and the hall is freezing. */
+  private makeMother(quirk: string): Patient {
+    const s = this.state;
+    const entry = s.registry.find((r) => r.id === MOTHER_ID)!;
+    const p = makePatient({ rng: this.rng, entry, archetype: 'fluent_mimic', stage: Math.max(4, s.stage), previous: s.history, quirk, seq: ++s.seq });
+    p.tells = ['no_breath', 'borrowed_memory'];
+    p.faceMark = entry.photoMark;
+    p.docs = { slipName: entry.name, slipDob: entry.dob, slipSender: entry.sender, wristband: entry.wristband, photoMark: entry.photoMark };
+    p.answers = {
+      name: 'Ada. Ada Wren. You know my name, love.',
+      dob: entry.dob,
+      sender: 'Nobody sent me. I walked. I wanted to see you.',
+      kin: 'You. Who else would I put down.',
+      memory: 'You used to count the headlights on the ceiling with me. Let me in. It is so cold out here.',
+    };
+    p.height = 0.95;
+    return p;
   }
 
   private makeFinale(): Patient {
@@ -404,6 +499,8 @@ export class Simulation {
     const mimic = p.truth === 'understudy';
     let wrong = false;
 
+    if (v === 'admit' && !mimic) s.admittedHumans++;
+    if (v === 'admit' && p.registryId === MOTHER_ID) s.motherTaken = true;
     if (!mimic) {
       if (v === 'refuse') {
         wrong = true;

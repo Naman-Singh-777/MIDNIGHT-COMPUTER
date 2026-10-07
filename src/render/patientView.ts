@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Rng } from '../core/rng';
 import type { Archetype, Patient, Verdict } from '../sim/types';
+import { drawFace, fabricTexture, sculptHead, type FaceState } from './faces';
 
 const puffTex = (() => {
   const c = document.createElement('canvas');
@@ -14,7 +15,7 @@ const puffTex = (() => {
   return new THREE.CanvasTexture(c);
 })();
 
-const FEMALE_NAMES = new Set(['Edith', 'Margit', 'Hester', 'Dorothea', 'Agnes', 'Winifred', 'Odette', 'Philippa', 'Mabel', 'Imelda']);
+export const FEMALE_NAMES = new Set(['Ada', 'Edith', 'Margit', 'Hester', 'Dorothea', 'Agnes', 'Winifred', 'Odette', 'Philippa', 'Mabel', 'Imelda']);
 
 type HairKind = 'none' | 'short' | 'slick' | 'bun' | 'long' | 'scarf' | 'habit';
 type HatKind = 'none' | 'trilby' | 'flat' | 'cloche';
@@ -55,6 +56,14 @@ function lookFor(p: Patient): Look {
   const t = rng.next();
   const skin = SKIN[t < 0.55 ? 0 : t < 0.8 ? 1 : t < 0.9 ? 2 : t < 0.96 ? 3 : 4];
   const a: Archetype = p.archetype;
+  if (p.registryId === 'R209') {
+    // Ada Wren. Grey bun, ward cardigan over a nightdress, nothing on her feet.
+    return {
+      female: true, age: 64, skin: SKIN[0], hair: 'bun', hairColor: '#b8b4aa', hat: 'none', coat: 'cardigan',
+      coatColor: new THREE.Color().setHSL(0.09, 0.2, 0.42), eye: EYES[1], glasses: false, stubble: false,
+      prop: 'none', pose: 'folded', shoulder: 0.84,
+    };
+  }
   const base: Look = {
     female,
     age: 45,
@@ -131,253 +140,6 @@ function lookFor(p: Patient): Look {
   }
 }
 
-type FaceState = 'open' | 'blink' | 'talk' | 'stare';
-
-/** One 256px canvas for the front patch of the head. Coordinates below are in a 128px space. */
-function drawFace(look: Look, p: Patient, stage: number, state: FaceState): THREE.CanvasTexture {
-  const mimic = p.truth === 'understudy';
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d')!;
-  g.scale(2, 2);
-  const [sr, sg, sb] = look.skin;
-  // the Understudy gets the skin almost right: too even, a little grey
-  const grey = mimic ? 0.12 + stage * 0.012 : 0;
-  const r = Math.round(sr * (1 - grey) + 150 * grey);
-  const gg = Math.round(sg * (1 - grey) + 156 * grey);
-  const b = Math.round(sb * (1 - grey) + 150 * grey);
-  const grad = g.createRadialGradient(64, 58, 6, 64, 64, 78);
-  grad.addColorStop(0, `rgb(${Math.min(255, r + 12)},${Math.min(255, gg + 10)},${Math.min(255, b + 8)})`);
-  grad.addColorStop(1, `rgb(${r - 46},${gg - 52},${b - 50})`);
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 128, 128);
-  const n = new Rng(Math.floor(p.hue * 1e6) + 17);
-  if (!mimic) {
-    // pores and age spots
-    for (let i = 0; i < 160 + look.age * 4; i++) {
-      g.fillStyle = `rgba(${90 + n.int(0, 40)},${50},${40},${n.range(0.04, 0.12)})`;
-      g.fillRect(n.range(8, 120), n.range(14, 122), 1, 1);
-    }
-  }
-  // hairline shadow at the top
-  const hl = g.createLinearGradient(0, 0, 0, 30);
-  hl.addColorStop(0, look.hair === 'none' ? 'rgba(0,0,0,0)' : look.hairColor);
-  hl.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = hl;
-  g.fillRect(0, 0, 128, 30);
-  // cheeks and shadow under the nose
-  g.fillStyle = 'rgba(190,90,80,0.14)';
-  g.beginPath();
-  g.ellipse(34, 82, 14, 9, 0, 0, 7);
-  g.ellipse(94, 82, 14, 9, 0, 0, 7);
-  g.fill();
-  g.fillStyle = 'rgba(60,30,25,0.22)';
-  g.beginPath();
-  g.ellipse(64, 86, 7, 3, 0, 0, 7);
-  g.fill();
-  // age lines
-  if (!mimic || look.age > 30) {
-    g.strokeStyle = `rgba(70,40,30,${Math.min(0.35, (look.age - 20) / 120)})`;
-    g.lineWidth = 1;
-    const ln = (x1: number, y1: number, cx: number, cy: number, x2: number, y2: number): void => {
-      g.beginPath();
-      g.moveTo(x1, y1);
-      g.quadraticCurveTo(cx, cy, x2, y2);
-      g.stroke();
-    };
-    if (!mimic) {
-      ln(46, 84, 40, 94, 44, 104);
-      ln(82, 84, 88, 94, 84, 104);
-      ln(36, 36, 64, 31, 92, 36);
-      ln(38, 40, 64, 35, 90, 40);
-    }
-  }
-  // eyes
-  const ey = 60;
-  const lid = state === 'blink';
-  const eyeScale = mimic ? 1.04 + stage * 0.012 : 1;
-  const drawEye = (cx: number, flip: number): void => {
-    if (lid) {
-      g.strokeStyle = '#2a1a14';
-      g.lineWidth = 2;
-      g.beginPath();
-      g.moveTo(cx - 11, ey);
-      g.quadraticCurveTo(cx, ey + 4, cx + 11, ey);
-      g.stroke();
-      return;
-    }
-    g.fillStyle = '#e6e0d2';
-    g.beginPath();
-    g.ellipse(cx, ey, 11 * eyeScale, (state === 'stare' ? 8.5 : 6.5) * eyeScale, 0, 0, 7);
-    g.fill();
-    g.fillStyle = 'rgba(150,40,40,0.18)';
-    g.beginPath();
-    g.ellipse(cx - flip * 8, ey, 3, 4, 0, 0, 7);
-    g.fill();
-    g.fillStyle = look.eye;
-    g.beginPath();
-    g.arc(cx, ey, 5.2 * eyeScale, 0, 7);
-    g.fill();
-    g.fillStyle = '#0a0705';
-    g.beginPath();
-    g.arc(cx, ey, state === 'stare' ? 1.6 : mimic ? 3.1 : 2.4, 0, 7);
-    g.fill();
-    if (!mimic) {
-      g.fillStyle = 'rgba(255,255,255,0.8)';
-      g.fillRect(cx + 1, ey - 3, 1.6, 1.6);
-    }
-    // upper lid line and bag
-    g.strokeStyle = 'rgba(30,18,12,0.85)';
-    g.lineWidth = 1.6;
-    g.beginPath();
-    g.moveTo(cx - 12, ey + 0.5);
-    g.quadraticCurveTo(cx, ey - 9, cx + 12, ey + 0.5);
-    g.stroke();
-    g.strokeStyle = 'rgba(80,45,40,0.25)';
-    g.beginPath();
-    g.moveTo(cx - 10, ey + 9);
-    g.quadraticCurveTo(cx, ey + 12, cx + 10, ey + 9);
-    g.stroke();
-  };
-  drawEye(46, 1);
-  drawEye(82, -1);
-  if (look.female) {
-    g.strokeStyle = 'rgba(20,12,8,0.7)';
-    g.lineWidth = 1;
-    for (let i = -3; i <= 3; i++) {
-      g.beginPath();
-      g.moveTo(46 + i * 3, ey - 5);
-      g.lineTo(46 + i * 3.4, ey - 9);
-      g.moveTo(82 + i * 3, ey - 5);
-      g.lineTo(82 + i * 3.4, ey - 9);
-      g.stroke();
-    }
-  }
-  // brows
-  g.strokeStyle = look.hair === 'none' ? '#5a4a3c' : look.hairColor;
-  g.lineWidth = look.female ? 2.2 : 3.6;
-  const by = state === 'stare' ? 41 : 44;
-  g.beginPath();
-  g.moveTo(32, by + 3);
-  g.quadraticCurveTo(46, by - 4, 58, by + 1);
-  g.moveTo(70, by + 1);
-  g.quadraticCurveTo(82, by - 4, 96, by + 3);
-  g.stroke();
-  // nose
-  g.fillStyle = 'rgba(255,230,210,0.16)';
-  g.fillRect(62, 56, 4, 24);
-  g.fillStyle = 'rgba(40,18,14,0.5)';
-  g.beginPath();
-  g.ellipse(59, 84, 2.4, 1.6, 0, 0, 7);
-  g.ellipse(69, 84, 2.4, 1.6, 0, 0, 7);
-  g.fill();
-  // glasses
-  if (look.glasses) {
-    g.strokeStyle = '#1a1612';
-    g.lineWidth = 1.8;
-    g.beginPath();
-    g.arc(46, ey, 14, 0, 7);
-    g.moveTo(96, ey);
-    g.arc(82, ey, 14, 0, 7);
-    g.moveTo(60, ey - 2);
-    g.lineTo(68, ey - 2);
-    g.stroke();
-    g.fillStyle = 'rgba(220,235,255,0.07)';
-    g.beginPath();
-    g.arc(46, ey, 13, 0, 7);
-    g.arc(82, ey, 13, 0, 7);
-    g.fill();
-  }
-  // stubble
-  if (look.stubble && !look.female) {
-    for (let i = 0; i < 260; i++) {
-      const x = n.range(28, 100);
-      const y = n.range(82, 118);
-      g.fillStyle = 'rgba(30,24,20,0.28)';
-      g.fillRect(x, y, 1, 1);
-    }
-  }
-  // mouth
-  const lipCol = look.female ? '#8d3a3c' : '#9a5a52';
-  const smile = mimic ? 21 + Math.min(stage, 7) * 1.7 : 15;
-  const my = 99;
-  if (state === 'talk') {
-    g.fillStyle = '#2a0c0c';
-    g.beginPath();
-    g.ellipse(64, my + 1, smile * 0.55, 6.5, 0, 0, 7);
-    g.fill();
-    g.fillStyle = '#d9d2c0';
-    g.fillRect(64 - smile * 0.45, my - 4, smile * 0.9, 3);
-    g.strokeStyle = lipCol;
-    g.lineWidth = 2.4;
-    g.beginPath();
-    g.ellipse(64, my + 1, smile * 0.55, 6.5, 0, 0, 7);
-    g.stroke();
-  } else if (state === 'stare') {
-    g.strokeStyle = lipCol;
-    g.lineWidth = 2.4;
-    g.beginPath();
-    g.moveTo(64 - 13, my);
-    g.lineTo(64 + 13, my + 0.4);
-    g.stroke();
-  } else {
-    g.strokeStyle = lipCol;
-    g.lineWidth = 3;
-    g.beginPath();
-    g.moveTo(64 - smile, my - (mimic ? 2 : 0));
-    g.quadraticCurveTo(64, my + (mimic ? 15 : 4), 64 + smile, my - (mimic ? 1 : 0));
-    g.stroke();
-    if (mimic && stage >= 3) {
-      // too many teeth, too even
-      g.fillStyle = '#ddd7c4';
-      g.beginPath();
-      g.moveTo(64 - smile + 3, my);
-      g.quadraticCurveTo(64, my + 12, 64 + smile - 3, my);
-      g.quadraticCurveTo(64, my + 5, 64 - smile + 3, my);
-      g.fill();
-      g.strokeStyle = 'rgba(60,40,30,0.55)';
-      g.lineWidth = 0.6;
-      for (let i = -6; i <= 6; i++) {
-        g.beginPath();
-        g.moveTo(64 + i * 2.8, my + 2);
-        g.lineTo(64 + i * 2.8, my + 7);
-        g.stroke();
-      }
-    }
-  }
-  // the mark the photograph should match
-  g.fillStyle = 'rgba(80,38,32,0.82)';
-  const m = p.faceMark;
-  if (m.includes('left brow')) {
-    g.fillStyle = 'rgba(190,150,140,0.9)';
-    g.fillRect(34, 36, 18, 2.5);
-  } else if (m.includes('right cheek')) g.fillRect(92, 76, 3.5, 3.5);
-  else if (m.includes('left eye')) g.fillRect(40, 72, 2.5, 2.5);
-  else if (m.includes('chin')) {
-    g.fillStyle = 'rgba(150,70,60,0.7)';
-    g.beginPath();
-    g.ellipse(64, 116, 8, 5, 0, 0, 7);
-    g.fill();
-  } else if (m.includes('nose')) {
-    g.strokeStyle = 'rgba(80,38,32,0.7)';
-    g.lineWidth = 1.5;
-    g.beginPath();
-    g.moveTo(62, 62);
-    g.lineTo(66, 70);
-    g.lineTo(62, 80);
-    g.stroke();
-  } else if (m.includes('tooth')) {
-    g.fillStyle = '#d9d2c0';
-    g.fillRect(58, my + 1, 4.5, 6);
-    g.fillStyle = look.skin ? 'rgba(70,35,30,0.9)' : '#000';
-    if (m.includes('chipped')) g.fillRect(60, my + 1, 2.5, 2.5);
-    else g.fillRect(62.2, my + 1, 1.2, 6);
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 export type ViewPhase = 'none' | 'approaching' | 'present' | 'leaving';
 
 interface ArmRig {
@@ -421,7 +183,19 @@ export class PatientView {
   /** Read by the game so the door and lightning can follow the patient. */
   progress = 0;
 
+  /** Character lights live outside the group so hiding the group never changes the light count. */
+  readonly rig = new THREE.Group();
+  private rim = new THREE.PointLight(0x9ab8d0, 0, 2.4, 1.6);
+  private under = new THREE.PointLight(0xffa860, 0, 1.7, 1.8);
+  private revealT = 0;
+  private glimpseIn = 14;
+  /** Set by the game for a few frames when the Understudy shows what it is. */
+  revealing = 0;
+  /** Called when the face slips on its own for a frame or two. */
+  onGlimpse: (() => void) | null = null;
+
   constructor(private readonly spawn: THREE.Vector3, private readonly stand: THREE.Vector3) {
+    this.rig.add(this.rim, this.under);
     this.group.visible = false;
     this.group.add(this.root);
     this.root.add(this.torso, this.head, this.propGroup);
@@ -497,6 +271,7 @@ export class PatientView {
     const coatMat = this.mat(coat);
     const dark = this.mat(coat.clone().multiplyScalar(0.55));
     const light = this.mat(coat.clone().multiplyScalar(1.5));
+    for (const m of [coatMat, dark, light]) m.map = fabricTexture();
     const skin = this.mat(new THREE.Color(look.skin[0] / 255, look.skin[1] / 255, look.skin[2] / 255).multiplyScalar(0.8));
     const s = look.shoulder;
     // coat body: a lathe with a wider hem, then a shoulder yoke
@@ -583,7 +358,9 @@ export class PatientView {
     const hair = this.mat(look.hairColor);
     this.head.position.y = 1.6;
     const sx = look.female ? 0.88 : 0.94;
-    const skull = this.mesh(new THREE.SphereGeometry(0.14, 22, 16), skin, this.head);
+    const skullGeo = new THREE.SphereGeometry(0.14, 48, 36);
+    sculptHead(skullGeo, look.female);
+    const skull = this.mesh(skullGeo, skin, this.head);
     skull.scale.set(sx, 1.12, 0.96);
     // the face patch, mapped over the front of the skull
     this.faces = {
@@ -591,10 +368,13 @@ export class PatientView {
       blink: drawFace(look, p, this.stage, 'blink'),
       talk: drawFace(look, p, this.stage, 'talk'),
       stare: drawFace(look, p, this.stage, 'stare'),
+      reveal: drawFace(look, p, Math.max(this.stage, 5), 'reveal'),
     };
-    this.faceMat = new THREE.MeshLambertMaterial({ map: this.faces.open });
+    this.faceMat = new THREE.MeshLambertMaterial({ map: this.faces.open, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     this.owned.push(this.faceMat);
-    const patch = this.mesh(new THREE.SphereGeometry(0.1405, 26, 16, 0.57, 2.0, 0.55, 1.9), this.faceMat, this.head);
+    const patchGeo = new THREE.SphereGeometry(0.1425, 48, 36, 0.57, 2.0, 0.55, 1.9);
+    sculptHead(patchGeo, look.female);
+    const patch = this.mesh(patchGeo, this.faceMat, this.head);
     patch.scale.set(sx, 1.12, 0.96);
     patch.castShadow = false;
     this.shown = 'open';
@@ -673,9 +453,9 @@ export class PatientView {
       const peak = this.mesh(new THREE.BoxGeometry(0.17, 0.012, 0.1), felt, this.head, 0, 0.085, 0.16);
       peak.rotation.x = 0.28;
     } else if (look.hat === 'cloche') {
-      const bell = this.mesh(new THREE.SphereGeometry(0.16, 16, 10, 0, Math.PI * 2, 0, 1.75), felt, this.head, 0, 0.04, 0);
+      const bell = this.mesh(new THREE.SphereGeometry(0.16, 16, 10, 0, Math.PI * 2, 0, 1.22), felt, this.head, 0, 0.045, -0.01);
       bell.scale.set(sx * 1.08, 1.0, 1.04);
-      this.mesh(new THREE.CylinderGeometry(0.17, 0.19, 0.01, 18), felt, this.head, 0, 0.0, 0.01).scale.set(sx, 1, 1.05);
+      this.mesh(new THREE.CylinderGeometry(0.17, 0.19, 0.01, 18), felt, this.head, 0, 0.075, 0.0).scale.set(sx, 1, 1.05);
       this.mesh(new THREE.SphereGeometry(0.018, 6, 5), this.mat(0xb8a06a), this.head, 0.12, 0.06, 0.06);
     }
   }
@@ -751,6 +531,12 @@ export class PatientView {
   update(dt: number, phase: ViewPhase, cam: THREE.Vector3, quiet: boolean): void {
     const p = this.patient;
     const look = this.look;
+    const on = !!p && !!look && this.group.visible;
+    this.rig.position.copy(this.group.position);
+    this.rim.position.set(0.35, 1.95, -0.55);
+    this.under.position.set(0, 0.95, 0.6);
+    this.rim.intensity = on ? 2.2 : 0;
+    this.under.intensity = on ? (p!.truth === 'understudy' ? 1.6 : 0.9) : 0;
     if (!p || !look || !this.group.visible) return;
     this.t += dt;
     const understudy = p.truth === 'understudy';
@@ -797,7 +583,25 @@ export class PatientView {
 
     // faces: blink, talk, stare
     let face: FaceState = 'open';
-    if (this.stare) face = 'stare';
+    // the Understudy slips. A frame or two of the other face, then it is back.
+    if (understudy && phase === 'present' && this.stage >= 2) {
+      this.glimpseIn -= dt;
+      if (this.glimpseIn <= 0) {
+        this.revealT = 0.07 + Math.random() * 0.06;
+        this.onGlimpse?.();
+        this.glimpseIn = 10 + Math.random() * 16 - this.stage;
+      }
+    }
+    this.revealT = Math.max(this.revealT - dt, this.revealing);
+    this.revealing = Math.max(0, this.revealing - dt);
+    const showing = understudy && this.revealT > 0;
+    head.scale.set(showing ? 0.93 : 1, showing ? 1.2 : 1, 1);
+    if (showing) {
+      head.rotation.z += (Math.random() - 0.5) * 0.25;
+      head.position.x = (Math.random() - 0.5) * 0.02;
+    } else head.position.x = 0;
+    if (showing) face = 'reveal';
+    else if (this.stare) face = 'stare';
     else if (this.speaking > 0 && Math.sin(this.t * 17) > -0.2) face = 'talk';
     else {
       this.blinkIn -= dt;
@@ -855,8 +659,8 @@ export class PatientView {
         mat.opacity = 0;
         return;
       }
-      s.position.set(0, 1.5 + ph * 0.1, 0.22 + ph * 0.35);
-      s.scale.setScalar(0.08 + ph * 0.35);
+      s.position.set(0, 1.52 + ph * 0.08, 0.18 + ph * 0.28);
+      s.scale.setScalar(0.04 + ph * 0.17);
       mat.opacity = (1 - ph / 0.7) * 0.55 * Math.min(1, ph * 8);
     });
   }

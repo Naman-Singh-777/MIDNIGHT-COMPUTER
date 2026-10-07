@@ -26,7 +26,22 @@ The owner said the game "looks too much AI generated" in all of these, and that 
 4. They want more scary sounds at appropriate timings.
 5. They want the research files checked again, especially on making horror games and player movement.
 
-## What this round did
+## Round 3 (this round)
+
+Owner's feedback: no fear, bland, unclear motive and goal, ledger cut off, buttons crowded, fake-looking environment, characters should be detailed and horrifying in the Mandela Catalogue way, and the game should play like Shift at Midnight with jobs around the map.
+
+1. Motive and goal. Your mother is in Ward B bed 9 (`src/data/motive.ts`). Keep the Understudy off the ward until six, then see her. Title sheet, opening line, HUD goal line and endings all say this. Her copy arrives at 01:52 after a phone call in her voice. The second chatty slot (the old night cook mismatch) is now her.
+2. Jobs around the map (`src/ui/minigames.ts`, sim side in `Simulation.runTodo`, `completeTask`, `wardCount`, `finish`). Mop the stain in the corridor, file slips at the cabinet, count Ward B through the door slot at 00:30, and the dawn visit. New props sit only at those spots: the stain, a WARD B sign and a slot plate on the existing door recess at x 8.6, and an invisible hit box on the existing cabinet.
+3. Four endings, chosen in `Simulation.finish` and shown through the slot.
+4. Faces (`src/render/faces.ts`). 512 px painted faces with bone shading, pores, wet eyes, hair-by-hair brows. The Understudy's smile widens and pulls at the corners each stage, pupils shrink to pins, one eye sits higher, and skin loses its pores. A 'reveal' face (black sockets, open ringed mouth, the corners split toward the ears) flashes for a frame or two on its own from stage 2 and holds for over a second when it catches your eye. Heads are sculpted (sockets, brow, cheekbones, narrower jaw). Coats get a wool texture. Character rim and under lights live in `view.rig` so hiding the patient never changes the light count.
+5. Voices. Speech uses the system voices through `speechSynthesis` when available, blips otherwise. The Understudy is pitched down and slowed with a ring-modulated drone under it. New sounds: emergency broadcast tones when the Understudy reaches stage 4 and up, a short glitch when a face slips, mop scrubbing.
+6. UI. Ledger has its own column on the right and is never clipped. Question and verdict buttons use short labels in one row. Tab pushes the papers aside. Pell's list shows on the left when standing.
+7. Environment textures only (`src/render/materials.ts`): floorboards with knots, nails and wear, plaster with tide-mark water stains, drips, flaking paint, cracks and mould, tiles with dirty grout, chips and scuffs, all with bump maps. No geometry or lights were changed.
+8. Tests: 24 (four new for the list, Ward B count, the mother and the endings).
+
+Verified headless (software GL): typecheck, tests, build, smoke test with no console errors, close-ups of the new faces, the filing screen, the slot view and the crowded ending sheet. Not verified: real voices (headless has none), how any of it sounds, frame rate on the laptop, and whether mopping by mouse feels good.
+
+## Round 2
 
 1. Characters. `src/render/patientView.ts` was rewritten. Every patient now has a head with a front face patch (blink, talk and stare states), nose, ears, hair or hat or headscarf or veil, neck, coat with lapels and buttons, shoulders, two-segment arms with hands, and a prop (umbrella, ceramic goose, red knitted cap, folder). Looks are seeded from the patient. The Understudy gets greyer skin, bigger eyes, a wider smile, no blinking from stage 2, longer arms from stage 3. Cast notes are in `docs/generated/CHARACTERS.md`.
 2. UI and fonts. `src/ui/style.css`, `src/ui/hud.ts` and the title sheet were redone as 1963 paperwork. Fonts are bundled through `@fontsource` (Special Elite, IM Fell English, Reenie Beanie, VT323). The slip is a typed form with a clip and a RECEIVED stamp. The ledger is a phosphor screen. Notes are pencil. Verdicts are rubber stamps. The 3D CRT and slip canvases use the same fonts.

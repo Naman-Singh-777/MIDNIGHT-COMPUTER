@@ -29,67 +29,211 @@ function tex(c: HTMLCanvasElement, rx = 1, ry = 1): THREE.CanvasTexture {
   return t;
 }
 
+/** Seeded so the building looks the same every night. */
+function rand(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+function smudge(g: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, a: number, sy = 1): void {
+  g.save();
+  g.translate(x, y);
+  g.scale(1, sy);
+  const gr = g.createRadialGradient(0, 0, 0, 0, 0, r);
+  gr.addColorStop(0, color.replace('A', String(a)));
+  gr.addColorStop(1, color.replace('A', '0'));
+  g.fillStyle = gr;
+  g.fillRect(-r, -r, r * 2, r * 2);
+  g.restore();
+}
+
+/** Floorboards: grain, knots, worn varnish down the middle of each board, nail heads, old scratches. */
 function wood(): THREE.CanvasTexture {
-  const [c, g] = canvas(256);
-  g.fillStyle = '#5a3a22';
-  g.fillRect(0, 0, 256, 256);
-  for (let y = 0; y < 256; y += 2) {
-    const v = 70 + Math.sin(y * 0.35 + Math.sin(y * 0.05) * 3) * 14;
-    g.fillStyle = `rgb(${v + 20},${v - 8},${v - 36})`;
-    g.fillRect(0, y, 256, 2);
-  }
-  for (let i = 0; i < 6; i++) {
-    g.strokeStyle = 'rgba(20,10,4,0.4)';
-    g.beginPath();
-    g.moveTo(0, 20 + i * 44);
-    g.lineTo(256, 20 + i * 44);
-    g.stroke();
-  }
-  noise(g, 256, 18, 3);
-  return tex(c, 2, 2);
-}
-
-function plaster(base: string, grime = 0.25): THREE.CanvasTexture {
-  const [c, g] = canvas(256);
-  g.fillStyle = base;
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 70; i++) {
-    const x = Math.random() * 256;
-    const y = Math.random() * 256;
-    const r = 20 + Math.random() * 60;
-    const gr = g.createRadialGradient(x, y, 0, x, y, r);
-    gr.addColorStop(0, `rgba(30,24,16,${grime * 0.18})`);
-    gr.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = gr;
-    g.fillRect(x - r, y - r, r * 2, r * 2);
-  }
-  noise(g, 256, 14, 5);
-  return tex(c, 2, 2);
-}
-
-function tile(a: string, b: string): THREE.CanvasTexture {
-  const [c, g] = canvas(256);
-  for (let y = 0; y < 4; y++)
-    for (let x = 0; x < 4; x++) {
-      g.fillStyle = (x + y) % 2 ? a : b;
-      g.fillRect(x * 64, y * 64, 64, 64);
+  const S = 512;
+  const [c, g] = canvas(S);
+  const R = rand(11);
+  const boards = 6;
+  const bw = S / boards;
+  for (let b = 0; b < boards; b++) {
+    const tone = 62 + R() * 26;
+    for (let x = 0; x < bw; x++) {
+      for (let y = 0; y < S; y += 2) {
+        const grain = Math.sin((x + b * 13) * 0.55 + Math.sin(y * 0.018 + b) * 4 + Math.sin(y * 0.003) * 9) * 9 + Math.sin(x * 2.3 + y * 0.01) * 3;
+        const v = tone + grain;
+        g.fillStyle = `rgb(${v + 24 | 0},${v - 4 | 0},${v - 34 | 0})`;
+        g.fillRect(b * bw + x, y, 1, 2);
+      }
     }
-  g.strokeStyle = 'rgba(0,0,0,0.5)';
-  g.lineWidth = 2;
-  for (let i = 0; i <= 4; i++) {
+    // worn strip where feet go
+    smudge(g, b * bw + bw / 2, S / 2, bw * 0.5, 'rgba(210,180,140,A)', 0.12, 6);
+    // knots
+    for (let k = 0; k < 2; k++) {
+      const kx = b * bw + 12 + R() * (bw - 24);
+      const ky = R() * S;
+      smudge(g, kx, ky, 7 + R() * 6, 'rgba(30,14,6,A)', 0.8, 1.6);
+      g.strokeStyle = 'rgba(40,20,8,0.35)';
+      for (let r = 9; r < 22; r += 4) {
+        g.beginPath();
+        g.ellipse(kx, ky, r * 0.6, r * 1.6, 0, 0, 7);
+        g.stroke();
+      }
+    }
+    // seams and nails
+    g.fillStyle = 'rgba(12,6,2,0.85)';
+    g.fillRect(b * bw, 0, 2, S);
+    const joint = R() * S;
+    g.fillRect(b * bw, joint, bw, 2);
+    g.fillStyle = 'rgba(30,30,30,0.9)';
+    for (const ny of [joint - 8, joint + 10]) {
+      g.fillRect(b * bw + 8, ny, 3, 3);
+      g.fillRect(b * bw + bw - 11, ny, 3, 3);
+    }
+  }
+  g.strokeStyle = 'rgba(230,210,180,0.12)';
+  g.lineWidth = 1;
+  for (let i = 0; i < 60; i++) {
+    const x = R() * S, y = R() * S, l = 10 + R() * 50, a = R() * 6.28;
     g.beginPath();
-    g.moveTo(i * 64, 0);
-    g.lineTo(i * 64, 256);
-    g.moveTo(0, i * 64);
-    g.lineTo(256, i * 64);
+    g.moveTo(x, y);
+    g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
     g.stroke();
   }
-  for (let i = 0; i < 40; i++) {
-    g.fillStyle = `rgba(20,16,10,${Math.random() * 0.12})`;
-    g.fillRect(Math.random() * 256, Math.random() * 256, 30 + Math.random() * 40, 4 + Math.random() * 8);
+  for (let i = 0; i < 10; i++) smudge(g, R() * S, R() * S, 20 + R() * 50, 'rgba(15,8,4,A)', 0.25);
+  noise(g, S, 14, 3);
+  return tex(c, 1, 1);
+}
+
+/**
+ * Painted plaster that has had forty winters: tide-mark water stains, hairline cracks,
+ * paint flaking to the coat underneath, grime where hands and trolleys touch, mould specks.
+ */
+function plaster(base: string, grime = 0.25, seed = 5): THREE.CanvasTexture {
+  const S = 512;
+  const [c, g] = canvas(S);
+  const R = rand(seed);
+  g.fillStyle = base;
+  g.fillRect(0, 0, S, S);
+  for (let i = 0; i < 120; i++) smudge(g, R() * S, R() * S, 20 + R() * 90, 'rgba(30,24,16,A)', grime * 0.16);
+  for (let i = 0; i < 40; i++) smudge(g, R() * S, R() * S, 10 + R() * 40, 'rgba(255,250,235,A)', 0.05);
+  // water stains: a pale centre and a brown tide line
+  for (let i = 0; i < 4; i++) {
+    const x = R() * S, y = R() * S * 0.6, r = 30 + R() * 60;
+    smudge(g, x, y + r * 0.6, r, 'rgba(120,90,40,A)', 0.14 * (0.5 + grime), 1.8);
+    g.strokeStyle = `rgba(90,62,26,${0.25 + grime * 0.3})`;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    for (let a = 0; a <= 6.3; a += 0.25) {
+      const rr = r * (0.85 + R() * 0.25);
+      const px = x + Math.cos(a) * rr, py = y + r * 0.6 + Math.sin(a) * rr * 1.8;
+      if (a === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.stroke();
+    // drips running down from it
+    for (let k = 0; k < 4; k++) {
+      const dx = x + (R() - 0.5) * r;
+      const gr = g.createLinearGradient(0, y + r, 0, y + r + 60 + R() * 120);
+      gr.addColorStop(0, 'rgba(90,62,26,0.3)');
+      gr.addColorStop(1, 'rgba(90,62,26,0)');
+      g.fillStyle = gr;
+      g.fillRect(dx, y + r, 2 + R() * 2, 180);
+    }
   }
-  noise(g, 256, 16, 9);
-  return tex(c, 2, 2);
+  // flaking paint patches show the darker coat underneath
+  for (let i = 0; i < 9; i++) {
+    const x = R() * S, y = R() * S;
+    g.fillStyle = 'rgba(70,62,50,0.35)';
+    g.beginPath();
+    g.moveTo(x, y);
+    for (let k = 0; k < 9; k++) g.lineTo(x + (R() - 0.5) * 34, y + (R() - 0.5) * 26);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = 'rgba(255,250,235,0.35)';
+    g.lineWidth = 1;
+    g.stroke();
+  }
+  // cracks
+  g.strokeStyle = 'rgba(25,18,12,0.5)';
+  g.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    let x = R() * S, y = R() * S;
+    g.beginPath();
+    g.moveTo(x, y);
+    for (let k = 0; k < 12; k++) {
+      x += (R() - 0.5) * 22;
+      y += 6 + R() * 14;
+      g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  // mould specks clustered in one corner
+  for (let i = 0; i < 260 * grime; i++) {
+    const a = R() * 6.28, r = Math.pow(R(), 2) * 90;
+    g.fillStyle = `rgba(30,36,22,${0.2 + R() * 0.4})`;
+    g.fillRect(S * 0.85 + Math.cos(a) * r, S * 0.1 + Math.sin(a) * r, 1.5, 1.5);
+  }
+  noise(g, S, 12, seed);
+  return tex(c, 1, 1);
+}
+
+/** Terrazzo-style tiles with dirty grout, chips, cracks, scuffs and a drying stain. */
+function tile(a: string, b: string, seed = 9): THREE.CanvasTexture {
+  const S = 512;
+  const [c, g] = canvas(S);
+  const R = rand(seed);
+  const n = 4;
+  const ts = S / n;
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      g.fillStyle = (x + y) % 2 ? a : b;
+      g.fillRect(x * ts, y * ts, ts, ts);
+      smudge(g, x * ts + ts / 2, y * ts + ts / 2, ts * 0.7, R() > 0.5 ? 'rgba(255,255,255,A)' : 'rgba(0,0,0,A)', 0.06 + R() * 0.06);
+      for (let k = 0; k < 140; k++) {
+        g.fillStyle = `rgba(${R() > 0.5 ? '255,255,255' : '20,20,20'},${0.08 + R() * 0.12})`;
+        g.fillRect(x * ts + R() * ts, y * ts + R() * ts, 1 + R() * 2, 1 + R() * 2);
+      }
+      if (R() < 0.18) {
+        // a cracked tile
+        g.strokeStyle = 'rgba(15,12,10,0.6)';
+        g.beginPath();
+        g.moveTo(x * ts + R() * ts, y * ts);
+        g.lineTo(x * ts + R() * ts, y * ts + ts * 0.5);
+        g.lineTo(x * ts + R() * ts, y * ts + ts);
+        g.stroke();
+      }
+      if (R() < 0.25) {
+        g.fillStyle = 'rgba(40,34,28,0.7)';
+        g.beginPath();
+        g.arc(x * ts + (R() > 0.5 ? 2 : ts - 2), y * ts + (R() > 0.5 ? 2 : ts - 2), 4 + R() * 6, 0, 7);
+        g.fill();
+      }
+    }
+  g.strokeStyle = 'rgba(28,24,18,0.85)';
+  g.lineWidth = 4;
+  for (let i = 0; i <= n; i++) {
+    g.beginPath();
+    g.moveTo(i * ts, 0);
+    g.lineTo(i * ts, S);
+    g.moveTo(0, i * ts);
+    g.lineTo(S, i * ts);
+    g.stroke();
+  }
+  // scuffs from shoes and wheels
+  g.strokeStyle = 'rgba(15,12,10,0.18)';
+  g.lineWidth = 2;
+  for (let i = 0; i < 26; i++) {
+    const x = R() * S, y = R() * S;
+    g.beginPath();
+    g.arc(x, y, 20 + R() * 60, R() * 6, R() * 6 + 0.6);
+    g.stroke();
+  }
+  smudge(g, S * 0.3, S * 0.7, 90, 'rgba(30,24,14,A)', 0.22, 0.6);
+  for (let i = 0; i < 14; i++) smudge(g, R() * S, R() * S, 30 + R() * 70, 'rgba(20,16,10,A)', 0.14);
+  noise(g, S, 12, seed);
+  return tex(c, 1, 1);
 }
 
 export interface Mats {
@@ -111,16 +255,18 @@ export interface Mats {
   emissiveWarm: THREE.MeshBasicMaterial;
 }
 
+const lam = (t: THREE.CanvasTexture): THREE.MeshLambertMaterial => new THREE.MeshLambertMaterial({ map: t, bumpMap: t, bumpScale: 0.8, color: 0xffffff });
+
 export function makeMaterials(): Mats {
   const w = wood();
   return {
-    wood: new THREE.MeshLambertMaterial({ map: w, color: 0xd8b48a }),
-    woodDark: new THREE.MeshLambertMaterial({ map: w, color: 0x7a5a40 }),
-    cream: new THREE.MeshLambertMaterial({ map: plaster('#cdb98f'), color: 0xffffff }),
-    paintGreen: new THREE.MeshLambertMaterial({ map: plaster('#4d6b5e', 0.5), color: 0xffffff }),
-    tileHall: new THREE.MeshLambertMaterial({ map: tile('#9c9382', '#6e6759') }),
-    tileCorr: new THREE.MeshLambertMaterial({ map: tile('#7d8b88', '#5d6a69') }),
-    ceiling: new THREE.MeshLambertMaterial({ map: plaster('#9d977f', 0.6), color: 0xffffff }),
+    wood: new THREE.MeshLambertMaterial({ map: w, bumpMap: w, bumpScale: 1.2, color: 0xd8b48a }),
+    woodDark: new THREE.MeshLambertMaterial({ map: w, bumpMap: w, bumpScale: 1.2, color: 0x7a5a40 }),
+    cream: lam(plaster('#cdb98f', 0.3, 5)),
+    paintGreen: lam(plaster('#4d6b5e', 0.55, 6)),
+    tileHall: lam(tile('#9c9382', '#6e6759', 9)),
+    tileCorr: lam(tile('#7d8b88', '#5d6a69', 10)),
+    ceiling: lam(plaster('#9d977f', 0.7, 7)),
     brass: new THREE.MeshStandardMaterial({ color: 0xb08a3e, metalness: 0.85, roughness: 0.38 }),
     metal: new THREE.MeshStandardMaterial({ color: 0x7c8588, metalness: 0.7, roughness: 0.5 }),
     rust: new THREE.MeshLambertMaterial({ color: 0x6b3f2c }),

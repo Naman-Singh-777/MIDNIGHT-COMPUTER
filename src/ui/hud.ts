@@ -4,7 +4,7 @@ import '@fontsource/im-fell-english/latin-400-italic.css';
 import '@fontsource/reenie-beanie/latin-400.css';
 import '@fontsource/vt323/latin-400.css';
 import './style.css';
-import type { Patient, QuestionId, RegistryEntry, Verdict } from '../sim/types';
+import type { Patient, QuestionId, RegistryEntry, TodoItem, Verdict } from '../sim/types';
 import { QUESTION_TEXT } from '../sim/patients';
 
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document): T => root.querySelector(sel) as T;
@@ -38,7 +38,7 @@ export class Hud {
     root.insertAdjacentHTML(
       'beforeend',
       `
-      <div id="clock" class="hud"><div class="time">22:00</div><div class="task"></div></div>
+      <div id="clock" class="hud"><div class="time">22:00</div><div class="goal">Keep it off Ward B until six. Then bed 9.</div><div class="task"></div><ul class="todo"></ul></div>
       <div id="bars" class="hud">
         <div>nerves</div><div class="bar sanity"><i></i></div>
         <div class="stam" style="display:none">wind</div><div class="bar stam" style="display:none"><i></i></div>
@@ -49,9 +49,9 @@ export class Hud {
       <div id="flashlight" class="hud">F  flashlight</div>
       <div id="cards">
         <div class="card" id="slip"><h3>Admission slip<small>Vesper Hollow Sanatorium</small></h3><dl></dl><span class="received">RECEIVED</span></div>
-        <div class="card crt off" id="ledger"><h3>VESPER LEDGER</h3><dl><dt>STATUS</dt><dd>Standing by</dd></dl></div>
         <div class="card" id="logcard"><h3>notes</h3><div id="log"></div></div>
       </div>
+      <div id="ledgerwrap"><div class="card crt off" id="ledger"><h3>VESPER LEDGER</h3><dl><dt>STATUS</dt><dd>Standing by</dd></dl></div></div>
       <div id="desk">
         <div class="group"><h4>ask</h4><div class="row" id="qrow"></div></div>
         <div class="group"><h4>check</h4><div class="row" id="trow"></div></div>
@@ -64,15 +64,16 @@ export class Hud {
     (['name', 'dob', 'sender', 'kin', 'memory'] as QuestionId[]).forEach((q, i) => {
       const b = document.createElement('button');
       b.className = 'btn';
-      b.innerHTML = `<kbd>${i + 1}</kbd>${QUESTION_TEXT[q]}`;
+      b.innerHTML = `<kbd>${i + 1}</kbd>${SHORT_Q[q]}`;
+      b.title = QUESTION_TEXT[q];
       b.onclick = () => this.h.ask(q);
       qrow.appendChild(b);
       this.btnQ.set(q, b);
     });
     const trow = $('#trow');
     const tools: [string, string, () => void][] = [
-      ['Z', 'Ledger lookup', () => this.h.lookup()],
-      ['X', 'Study the face', () => this.h.face()],
+      ['Z', 'Ledger', () => this.h.lookup()],
+      ['X', 'Face', () => this.h.face()],
     ];
     for (const [k, label, fn] of tools) {
       const b = document.createElement('button');
@@ -84,10 +85,10 @@ export class Hud {
     }
     const vrow = $('#vrow');
     const verdicts: [Verdict, string, string, string][] = [
-      ['admit', 'A', 'Admit to ward', 'admit'],
-      ['observe', 'O', 'Hold for observation', 'observe'],
-      ['refuse', 'R', 'Refuse at the gate', 'refuse'],
-      ['contain', 'L', 'Pull the lever', 'contain'],
+      ['admit', 'A', 'Admit', 'admit'],
+      ['observe', 'O', 'Observe', 'observe'],
+      ['refuse', 'R', 'Refuse', 'refuse'],
+      ['contain', 'L', 'Lever', 'contain'],
     ];
     for (const [v, k, label, cls] of verdicts) {
       const b = document.createElement('button');
@@ -127,9 +128,22 @@ export class Hud {
     for (const e of this.root.querySelectorAll<HTMLElement>('#bars .stam')) e.style.display = show ? 'block' : 'none';
     ($('#bars .bar.stam > i') as HTMLElement).style.width = `${v * 100}%`;
   }
+  setTodo(items: TodoItem[]): void {
+    const ul = $('#clock .todo');
+    ul.innerHTML = items
+      .filter((t) => t.shown)
+      .map((t) => `<li class="${t.done ? 'done' : t.missed ? 'missed' : ''}">${esc(t.text)}<small>${esc(t.where)}</small></li>`)
+      .join('');
+  }
+  /** Tab: push the paperwork aside to look at whoever is at the glass. */
+  toggleAside(): void {
+    this.root.classList.toggle('aside');
+  }
   setMode(desk: boolean): void {
+    this.root.classList.toggle('desk', desk);
     $('#desk').style.display = desk ? 'flex' : 'none';
     $('#cards').style.display = desk ? 'flex' : 'none';
+    $('#ledgerwrap').style.display = desk ? 'block' : 'none';
     $('#cross').style.display = desk ? 'none' : 'block';
     $('#flashlight').style.display = desk ? 'none' : 'block';
   }
@@ -231,6 +245,8 @@ export class Hud {
     return this.patient;
   }
 }
+
+const SHORT_Q: Record<QuestionId, string> = { name: 'Name', dob: 'Born', sender: 'Sent by', kin: 'Kin', memory: 'Tonight' };
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);

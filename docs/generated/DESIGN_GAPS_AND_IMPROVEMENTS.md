@@ -14,3 +14,11 @@
 11. Speech is a blip synth. It needs real voices.
 12. The wall calendar in the booth still uses Georgia. It is part of the locked map, so it was left alone.
 13. The breath fog sprite is large when the camera is close. Fine at the booth distance, odd in close-ups.
+
+## Logged in round 3 (left alone because of the map lock)
+
+1. The Ward B slot view is a flat 2D drawing. It reads, but the beds are crude. A 3D room behind the door would be better and needs map approval.
+2. The hall behind the glass is still one box with one light. The new textures help, but the lighting rig is locked.
+3. "Work another night" only closes the end sheet. There is no reset to a fresh shift yet.
+4. System voices differ a lot between Windows, Mac and Chrome. Recorded lines would be more consistent.
+5. The mother's copy uses the fluent mimic body with a look override. She deserves her own animation (bare feet, hand flat on the glass).
