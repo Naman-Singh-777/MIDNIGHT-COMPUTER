@@ -88,7 +88,7 @@ canvas#view { position: absolute; inset: 0; width: 100%; height: 100%; display: 
 #logcard h3 { margin: 0 0 2px; font-weight: normal; font-size: 22px; letter-spacing: 1px; text-decoration: underline; text-decoration-thickness: 1px; }
 #log { font-size: 21px; line-height: 22px; max-height: 154px; overflow: hidden; }
 #log p { margin: 0; }
-#log:empty::before { content: 'C: duck under the sill. Hold right mouse: lean in. Never hold their eye.'; color: #7a7360; }
+#log:empty::before { content: 'Check: does the form match the records? Is there breath on the glass? Did they answer too fast? C gets you under the desk.'; color: #7a7360; }
 #log .q { color: #6a6455; }
 #log .face { color: #7a1f1f; }
 

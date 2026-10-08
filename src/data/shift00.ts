@@ -1,17 +1,23 @@
 import type { ShiftSlot } from '../sim/types';
 
-/** Shift 00. About 22 real minutes. Minutes count from 22:00. */
+/** Night 00. About 22 real minutes. Minutes count from 22:00; the wall clock runs 1.6 times faster. */
 export const SHIFT00_END = 300;
 export const SHIFT00_BREAKER_AT = 105;
 export const SHIFT00_FINALE_AT = 268;
 
 export const SHIFT00: ShiftSlot[] = [
-  { at: 8, archetype: 'plain', quirk: 'Polite. Dripping from the rain. Apologizes for the puddle.' },
-  { at: 30, archetype: 'chatty', quirk: 'Carries a ceramic goose and insists it is his sister. Gives the goose a separate admission slip.' },
-  { at: 58, archetype: 'strange_innocent', quirk: 'Hums the same four notes. The slip has a typo. He is exactly who he says he is.' },
-  { at: 84, archetype: 'slipping_mimic', quirk: 'Smiles slightly too long. Rain does not seem to bother them.' },
-  { at: 132, archetype: 'tragic', quirk: 'Asks if the children\'s ward is on this floor. Holds a knitted cap with no child in it.' },
-  { at: 162, archetype: 'slipping_mimic', quirk: 'Very calm. Repeats back what you say, softly, like practising.' },
-  { at: 198, archetype: 'fluent_mimic', quirk: 'Almost perfect. Tells a story you think you have heard before.' },
-  { at: 232, archetype: 'fluent_mimic', special: 'mother', quirk: 'Your mother, barefoot in a ward cardigan, on the wrong side of the glass. She has never once been this calm.' },
+  { at: 8, archetype: 'plain', cast: 'walter' },
+  { at: 24, archetype: 'chatty', cast: 'bernard' },
+  { at: 40, archetype: 'plain', cast: 'dolly' },
+  { at: 58, archetype: 'strange_innocent', cast: 'tobias' },
+  // Walter again. Same face, same slippers line. Dry. If you let the real one in, the records say so.
+  { at: 84, archetype: 'slipping_mimic', cast: 'walter', copy: true },
+  { at: 112, archetype: 'plain', cast: 'ivor' },
+  { at: 132, archetype: 'tragic', cast: 'mae' },
+  { at: 160, archetype: 'slipping_mimic', cast: 'penhale' },
+  { at: 176, archetype: 'plain', cast: 'rosa' },
+  { at: 196, archetype: 'fluent_mimic', cast: 'marsh' },
+  { at: 214, archetype: 'plain', cast: 'gus' },
+  { at: 232, archetype: 'fluent_mimic', special: 'mother', quirk: 'Your mother, barefoot in a ward nightgown, outside in the rain. She knows your name. She has not known your name since spring.' },
+  { at: 250, archetype: 'plain', cast: 'edie' },
 ];

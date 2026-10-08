@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { AudioEngine } from './audio/engine';
 import { FixedClock } from './core/clock';
-import { PAUSE_HTML, SPEAKER_VOICE, TITLE_HTML, endHtml, greeting } from './data/dialogue';
+import { PAUSE_HTML, SPEAKER_VOICE, TITLE_HTML, deathHtml, endHtml, greeting } from './data/dialogue';
+import { CAST_BY_ID } from './data/cast';
+import { CreatureView } from './render/creature';
 import { Physics } from './physics/world';
 import { PlayerController, type InputState } from './player/controller';
 import { buildEnvironment, type Env, type Interact } from './render/environment';
@@ -12,7 +14,7 @@ import { Post } from './render/post';
 import { loadSave, writeSave } from './save/save';
 import { Simulation } from './sim/simulation';
 import { QUESTION_TEXT } from './sim/patients';
-import type { DirectorCue, Ending, Patient, QuestionId, TodoItem, Verdict } from './sim/types';
+import type { DeathCause, DirectorCue, Ending, Patient, QuestionId, TodoItem, Verdict } from './sim/types';
 import { Hud, formatClock } from './ui/hud';
 
 const WINDOW_POS = { x: 0, y: 1.4, z: -1.5 };
@@ -55,6 +57,43 @@ function stainTexture(): THREE.CanvasTexture {
     g.beginPath();
     g.ellipse(316 + f * 9, 44 - Math.abs(f - 1.5) * 4, 3.5, 11, 0.15 * (f - 1.5), 0, 7);
     g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** Cracks spreading from where its hands were. */
+function crackTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.strokeStyle = 'rgba(235,245,255,0.85)';
+  for (const [cx, cy] of [
+    [210, 120],
+    [300, 110],
+    [256, 150],
+  ]) {
+    for (let i = 0; i < 14; i++) {
+      let x = cx, y = cy;
+      const a = Math.random() * Math.PI * 2;
+      g.lineWidth = 0.6 + Math.random() * 1.4;
+      g.beginPath();
+      g.moveTo(x, y);
+      for (let k = 0; k < 7; k++) {
+        x += Math.cos(a + (Math.random() - 0.5) * 0.8) * (10 + Math.random() * 22);
+        y += Math.sin(a + (Math.random() - 0.5) * 0.8) * (10 + Math.random() * 22);
+        g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+    g.lineWidth = 0.6;
+    for (let r = 8; r < 40; r += 9) {
+      g.beginPath();
+      g.arc(cx, cy, r + Math.random() * 4, 0, Math.PI * 2);
+      g.stroke();
+    }
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -136,6 +175,10 @@ export class Game {
       this.flashV = Math.max(this.flashV, 0.15);
     };
     this.buildTaskProps();
+    this.env.scene.add(this.creature.group);
+    this.crack = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.25), new THREE.MeshBasicMaterial({ map: crackTexture(), transparent: true, opacity: 0, depthWrite: false }));
+    this.crack.position.set(0, 1.575, -1.205);
+    this.env.scene.add(this.crack);
     this.env.scene.add(this.player.camera);
 
     this.flashlight = new THREE.SpotLight(0xfff0d8, 0, 14, 0.42, 0.55, 1.6);
@@ -190,7 +233,7 @@ export class Game {
     this.running = true;
     if (!this.began) {
       this.began = true;
-      this.hud.setTask('Check each slip against the ledger. Trust the lamp.');
+      this.hud.setTask('Check each form against the records. Get to six.');
     }
     if (this.player.mode === 'floor') this.canvas.requestPointerLock?.();
   }
@@ -221,6 +264,8 @@ export class Game {
       this.lightningT = Math.min(this.lightningT, 3);
     });
     b.on('patientLeft', ({ verdict }) => {
+      this.breachTimers.forEach((t) => clearTimeout(t));
+      this.breachTimers = [];
       this.view.beginLeave(verdict);
       this.hud.showPatient(null);
       this.drawSlip(null);
@@ -247,11 +292,11 @@ export class Game {
         this.refreshTaskLine(this.sim.state.todo);
       }
     });
-    b.on('story', ({ text, speaker, call }) => {
+    b.on('story', ({ text, speaker, call, wrong }) => {
       const who = speaker ?? 'Intercom';
       const v = SPEAKER_VOICE[who] ?? { pitch: 150, radio: true };
       const speak = (): void => {
-        const dur = this.audio.voice(text, { pitch: v.pitch, radio: v.radio, female: FEMALE_STAFF.has(who), mimic: who === 'Ada Wren' ? 0.35 : 0 });
+        const dur = this.audio.voice(text, { pitch: v.pitch, radio: v.radio, female: FEMALE_STAFF.has(who), mimic: wrong ? 0.55 : 0 });
         this.hud.subtitle(who, text, Math.max(4500, dur * 1000 + 800));
       };
       if (call) {
@@ -261,6 +306,43 @@ export class Game {
         this.pendingTimers.push(window.setTimeout(speak, 3800));
       } else speak();
     });
+    b.on('stalker', ({ event }) => {
+      const st = this.sim.stalker;
+      const pos = { x: st.x, y: 1.9, z: st.z };
+      if (event === 'appear') {
+        this.audio.presence();
+        this.pendingTimers.push(window.setTimeout(() => this.audio.creatureStep(pos), 1500));
+      } else if (event === 'growl') this.audio.growl(pos);
+      else if (event === 'shriek') {
+        this.audio.shriek(pos);
+        this.flickerT = Math.max(this.flickerT, 0.8);
+      } else if (event === 'bang') {
+        this.audio.doorBang({ x: 1.85, y: 1.2, z: 0.85 });
+        this.flickerT = Math.max(this.flickerT, 0.3);
+      }
+    });
+    b.on('breach', ({ phase }) => {
+      this.view.setBreach(phase);
+      if (phase === 'crack') {
+        this.hud.subtitle('', 'It is coming through the glass. Drop it through the trapdoor (T), or get under the desk (C) and stay there.', 6000);
+        for (let i = 0; i < 6; i++)
+          this.breachTimers.push(
+            window.setTimeout(() => {
+              this.crackLevel = Math.min(1, this.crackLevel + 0.17);
+              this.audio.glassHit(i / 5);
+              this.flashV = Math.max(this.flashV, 0.1);
+            }, 600 + i * 1250),
+          );
+      } else if (phase === 'inside') {
+        this.crackLevel = 1;
+        this.audio.glassShatter();
+        this.flickerT = 1.2;
+      } else {
+        this.audio.creatureStep({ x: 1.85, y: 0, z: 0.85 });
+        this.audio.creak({ x: 1.8, y: 1, z: 0.9 });
+      }
+    });
+    b.on('death', ({ cause }) => this.die(cause));
     b.on('todo', ({ items }) => {
       this.hud.setTodo(items);
       this.refreshTaskLine(items);
@@ -298,7 +380,9 @@ export class Game {
       this.save.nights++;
       this.save.bestCorrect = Math.max(this.save.bestCorrect, score.correct);
       writeSave(this.save);
+      if (this.deathCause) return;
       this.hud.overlay(endHtml(score, 'Officer on duty'));
+      this.bindRestart();
     });
   }
 
@@ -324,7 +408,7 @@ export class Game {
         break;
       case 'door_creak': {
         this.audio.creak(inBooth ? { x: 1.8, y: 1, z: 0.8 } : { x: camX + 5, y: 1, z: 0.9 });
-        const crate = this.env.props[4];
+        const crate = this.env.props.find((p) => p.mesh.userData.interact?.prompt === 'Crate');
         crate?.phys.body.applyImpulse({ x: 0.4, y: 0.5, z: 0.2 }, true);
         break;
       }
@@ -372,6 +456,13 @@ export class Game {
     }
   }
   private flickerPhone = 0;
+  private creature = new CreatureView();
+  private crack!: THREE.Mesh;
+  private crackLevel = 0;
+  private breachTimers: number[] = [];
+  private stepT = 0;
+  private dying = 0;
+  private deathCause: DeathCause | null = null;
   private stareHinted = false;
   private lastPace = 'calm';
 
@@ -399,16 +490,17 @@ export class Game {
 
   /** A patient speaking through the glass. The Understudy's voice sinks as it learns. */
   private say(p: Patient, text: string): number {
-    const female = FEMALE_NAMES.has(p.displayName.split(' ')[0] ?? '') || p.archetype === 'voice_mimic' || p.archetype === 'tragic';
+    const c = p.castId ? CAST_BY_ID[p.castId] : null;
+    const female = c ? c.female : FEMALE_NAMES.has(p.displayName.split(' ')[0] ?? '') || p.archetype === 'voice_mimic' || p.archetype === 'tragic';
     const mimic = p.truth === 'understudy' ? (p.archetype === 'voice_mimic' ? 1 : Math.min(0.9, 0.15 + this.sim.state.stage * 0.1)) : 0;
-    return this.audio.voice(text, { pitch: this.voicePitch(p), radio: false, female, mimic });
+    return this.audio.voice(text, { pitch: c ? c.voice.pitch : this.voicePitch(p), radio: false, female, mimic, rate: c?.voice.rate });
   }
 
   private lookup(): void {
     if (!this.running) return;
     const e = this.sim.lookup();
     if (!e) {
-      if (!this.sim.state.powerOn) this.hud.subtitle('Ledger terminal', 'No power. The screen is a dark mirror.', 2500);
+      if (!this.sim.state.powerOn) this.hud.subtitle('Records', 'No power. The screen is dark.', 2500);
       return;
     }
     this.hud.setLedger(e, false, true);
@@ -428,7 +520,7 @@ export class Game {
   private doVerdict(v: Verdict): void {
     if (!this.running) return;
     if (v === 'contain' && !this.sim.state.powerOn) {
-      this.hud.subtitle('Lever', 'The lever is electric. It does nothing in the dark.', 2800);
+      this.hud.subtitle('Trapdoor', 'The trapdoor runs on the mains. With the power out it does nothing.', 2800);
       return;
     }
     if (!this.sim.state.current || this.sim.state.phase !== 'present') {
@@ -498,7 +590,7 @@ export class Game {
       else if (code === 'KeyA') this.doVerdict('admit');
       else if (code === 'KeyO') this.doVerdict('observe');
       else if (code === 'KeyR') this.doVerdict('refuse');
-      else if (code === 'KeyL') this.doVerdict('contain');
+      else if (code === 'KeyT' || code === 'KeyL') this.doVerdict('contain');
       else if (code === 'Tab') this.hud.toggleAside();
       else if (code === 'KeyQ') {
         this.player.stand();
@@ -593,6 +685,8 @@ export class Game {
     }
     this.openMini();
     const count = this.sim.wardCount();
+    // while your eye is at the slot, something comes up the corridor behind you
+    if (mode === 'count1' && (count.extras > 0 || this.sim.state.stage >= 2)) this.sim.summonStalker(13.5, 70);
     this.mini = new WardView(
       this.root,
       mode,
@@ -740,6 +834,7 @@ export class Game {
     this.post.adapt(dt * 1000);
 
     const sim = this.sim;
+    if (this.dying > 0) this.deathFrame(dt);
     if (this.running) {
       for (let i = 0; i < this.speedUp; i++) sim.tick(dt);
       const steps = this.clock.advance(dt);
@@ -752,7 +847,7 @@ export class Game {
 
     const s = sim.state;
     const seated = this.player.mode === 'desk';
-    sim.setDuck(seated && this.player.ducked);
+    sim.setDuck(this.player.ducked);
     sim.setGaze(seated && this.player.zoomed && s.phase === 'present');
     const pace = sim.director.pace;
     if (pace !== this.lastPace) {
@@ -761,6 +856,7 @@ export class Game {
     }
     const f = this.player.feet;
     sim.setZone(f.x > 12.4 ? 'breaker' : f.x > 2.0 ? 'corridor' : 'booth');
+    this.feedStalker(dt);
 
     // patient phase transitions
     if (s.phase !== this.lastPhase) {
@@ -798,6 +894,83 @@ export class Game {
     if (this.perfOn) this.perfTick(dt);
   }
   private lastMs = 0;
+
+  /** Tells the sim where you are and how loud you are being, and moves the tall one. */
+  private feedStalker(dt: number): void {
+    const pl = this.player;
+    const f = pl.feet;
+    const moving = pl.stepDelta > 0.0005 && pl.mode === 'floor';
+    const noise = !moving ? 0 : pl.sprinting ? 1 : pl.ducked ? 0.02 : 0.38;
+    const range = !moving ? 0 : pl.sprinting ? 13 : pl.ducked ? 1.5 : 6;
+    const st = this.sim.stalker;
+    let torchOnIt = false;
+    if (this.flashlightOn && st.active && pl.mode === 'floor') {
+      const to = new THREE.Vector3(st.x - pl.camera.position.x, 1.9 - pl.camera.position.y, st.z - pl.camera.position.z);
+      const d = to.length();
+      torchOnIt = d < 7 && to.normalize().dot(pl.forward()) > 0.93;
+    }
+    this.sim.setPlayer({ x: f.x, z: f.z, noise, noiseRange: range, torchOnIt, inBooth: f.x < 1.85, doorClosed: !this.env.boothDoor.open });
+    this.creature.update(dt, st.active, st.x, st.z, st.mode, pl.camera.position);
+    if (st.active && st.mode !== 'door') {
+      this.stepT -= dt * (st.mode === 'hunt' ? 2.6 : 1);
+      if (this.stepT <= 0) {
+        this.stepT = 0.85;
+        if (st.mode !== 'listen') this.audio.creatureStep({ x: st.x, y: 0, z: st.z });
+      }
+    }
+  }
+
+  /** You lose the night. A short, earned scare, then the sheet, then the whole shift starts again. */
+  private die(cause: DeathCause): void {
+    if (this.deathCause) return;
+    this.mini?.close(false);
+    this.deathCause = cause;
+    this.running = false;
+    this.ended = true;
+    document.exitPointerLock?.();
+    this.audio.stopVoice();
+    this.audio.deathSting();
+    this.dying = cause === 'nerves' ? 2.5 : 1.3;
+    const clock = formatClock(this.sim.state.minute);
+    this.pendingTimers.push(
+      window.setTimeout(() => {
+        this.hud.overlay(deathHtml(cause, clock));
+        this.bindRestart();
+      }, this.dying * 1000),
+    );
+  }
+
+  private bindRestart(): void {
+    const b = document.querySelector<HTMLButtonElement>('#overlay button[data-restart]');
+    if (!b) return;
+    b.onclick = () => {
+      const qs = new URLSearchParams(location.search);
+      qs.set('autostart', '1');
+      qs.delete('seed');
+      location.search = qs.toString();
+    };
+  }
+
+  /** The last second of your life, drawn in the world: it is in your face. */
+  private deathFrame(dt: number): void {
+    this.dying -= dt;
+    const cam = this.player.camera;
+    const fwd = this.player.forward();
+    if (this.deathCause === 'stalker') {
+      const st = this.sim.stalker;
+      const target = cam.position.clone().add(fwd.clone().multiplyScalar(0.55));
+      st.x += (target.x - st.x) * Math.min(1, dt * 12);
+      st.z += (target.z - st.z) * Math.min(1, dt * 12);
+      this.creature.update(dt, true, st.x, st.z, 'hunt', cam.position);
+      this.creature.group.position.y = cam.position.y - 2.2;
+      this.flashV = Math.random() * 0.4;
+    } else if (this.deathCause === 'breach') {
+      const g = this.view.group;
+      g.position.lerp(cam.position.clone().add(fwd.clone().multiplyScalar(0.45)).setY(cam.position.y - 1.55), Math.min(1, dt * 10));
+      this.view.revealing = 1;
+      this.flashV = Math.random() * 0.4;
+    }
+  }
 
   /** Mopping: hold E on the stain and scrub with the mouse. The view stays put while you scrub. */
   private mopTick(dt: number): void {
@@ -855,9 +1028,16 @@ export class Game {
     L.hall.intensity = (s.powerOn ? 34 : 0) * (this.flickerT > 0 ? 0.5 + 0.5 * lampMul : 1);
     L.hemi.intensity = s.powerOn ? 0.55 : 0.22;
     const emergency = !s.powerOn;
+    (this.crack.material as THREE.MeshBasicMaterial).opacity = this.crackLevel * 0.9;
+    const st = this.sim.stalker;
     L.corridor.forEach((l, i) => {
-      const flick = s.zone !== 'booth' && this.flickerT > 0 ? (Math.random() > 0.5 ? 1 : 0.1) : 1;
-      l.intensity = emergency ? 0.9 + Math.sin(this.time * 2 + i) * 0.4 : 5.5 * flick;
+      // the corridor: one tube is dead, the others buzz and stutter, and they stutter hard when it is near
+      const near = st.active ? Math.max(0, 1 - Math.abs(l.position.x - st.x) / 3.5) : 0;
+      let flick = s.zone !== 'booth' && this.flickerT > 0 ? (Math.random() > 0.5 ? 1 : 0.1) : 1;
+      if (near > 0 && Math.random() < near * 0.5) flick *= 0.05;
+      if (Math.sin(this.time * 0.37 + i * 2.1) > 0.97) flick *= 0.2;
+      const dead = i === 1 ? 0 : 1;
+      l.intensity = emergency ? (0.9 + Math.sin(this.time * 2 + i) * 0.4) * (1 - near * 0.8) : 3.2 * flick * dead;
       l.color.set(emergency ? 0xff3a2a : 0xa9d8c4);
       (L.corridorBulbs[i].material as THREE.MeshBasicMaterial).color.set(emergency ? 0x5a0d08 : 0xcfeee0);
     });
@@ -914,19 +1094,19 @@ export class Game {
     const h = this.hovered;
     const heldE = this.input.keys.has('KeyE');
     if (this.player.mode === 'desk') {
-      this.hud.prompt(h?.id === 'lever' ? 'Click: pull the containment lever' : null);
+      this.hud.prompt(h?.id === 'lever' ? 'Click: open the trapdoor under them' : null);
       this.breakerHold = 0;
       return;
     }
     if (h?.id === 'breaker') {
       if (!s.powerOn) {
         this.breakerHold = heldE ? this.breakerHold + dt : 0;
-        this.hud.prompt('Hold E: throw the breaker', Math.min(1, this.breakerHold / 1.3));
+        this.hud.prompt('Hold E: reset the fuses', Math.min(1, this.breakerHold / 1.3));
         if (this.breakerHold >= 1.3) {
           this.sim.restorePower();
           this.breakerHold = 0;
         }
-      } else this.hud.prompt('The breaker is holding');
+      } else this.hud.prompt('The fuses are holding');
       return;
     }
     this.breakerHold = 0;
@@ -941,12 +1121,12 @@ export class Game {
       return;
     }
     if (h?.id === 'wardslot') {
-      this.hud.prompt('E: look through the Ward B slot');
+      this.hud.prompt('E: look through the slot in the Ward B door');
       return;
     }
     if (h?.id === 'door') this.hud.prompt(`E: ${this.env.boothDoor.open ? 'close' : 'open'} the booth door`);
     else if (h?.id === 'chair') this.hud.prompt('E: sit at the desk');
-    else if (h?.id === 'lever') this.hud.prompt('E: pull the containment lever');
+    else if (h?.id === 'lever') this.hud.prompt('E: open the trapdoor');
     else this.hud.prompt(null);
   }
 

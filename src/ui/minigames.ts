@@ -19,7 +19,7 @@ const SLIPS: Slip[] = [
   { name: 'TULLY, Edmund', date: '01/10/1963', note: 'Ward A. Refused soup.', drawer: 2 },
   { name: 'HARGREAVE, Clem', date: '02/10/1963', note: 'Discharged to family.', drawer: 0 },
   { name: 'KELL, Oonagh', date: '03/10/1963', note: 'Ward B. Counts the beds out loud.', drawer: 1 },
-  { name: 'WREN, ______', date: 'TONIGHT, 22:00', note: 'Ward B, bed 10. Officer on duty.', drawer: 2 },
+  { name: 'WREN, ______', date: 'TONIGHT, 22:00', note: 'Ward B, bed 10. Night officer.', drawer: 2 },
 ];
 
 export class FilingGame {
@@ -39,7 +39,7 @@ export class FilingGame {
   ) {
     this.el = document.createElement('div');
     this.el.id = 'mini';
-    this.el.innerHTML = `<div class="filing"><div class="cardslot"></div><div class="drawers">${DRAWERS.map((d, i) => `<button class="drawer" data-d="${i}"><kbd>${i + 1}</kbd>${d}</button>`).join('')}</div><div class="minihint">File each slip by surname. 1, 2, 3 or click. Q to leave it for later.</div></div>`;
+    this.el.innerHTML = `<div class="filing"><div class="cardslot"></div><div class="drawers">${DRAWERS.map((d, i) => `<button class="drawer" data-d="${i}"><kbd>${i + 1}</kbd>${d}</button>`).join('')}</div><div class="minihint">File each form by surname. 1, 2, 3 or click. Q to leave it for later.</div></div>`;
     root.appendChild(this.el);
     this.el.querySelectorAll<HTMLButtonElement>('.drawer').forEach((b) => (b.onclick = () => this.file(Number(b.dataset.d))));
     window.addEventListener('keydown', this.keyFn);

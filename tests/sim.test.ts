@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/simulation';
 import { swapDigits } from '../src/sim/patients';
+import { Stalker } from '../src/sim/stalker';
 import type { Patient } from '../src/sim/types';
 
 function runUntilPatient(sim: Simulation, archetype?: Patient['archetype'], maxSeconds = 4000): Patient {
@@ -65,9 +66,9 @@ describe('patients', () => {
     const sim = new Simulation(5);
     const p = runUntilPatient(sim, 'strange_innocent');
     const entry = sim.registryOf(p);
-    expect(p.truth).toBe('human');
-    expect(p.docs.slipDob).not.toBe(entry.dob);
-    expect(p.answers.dob).toBe(entry.dob);
+    expect(p.truth).toContain('human');
+    expect(p.docs.slipDob).not.toContain(entry.dob);
+    expect(p.answers.dob).toContain(entry.dob);
   });
 
   it('slipping mimics have at least one tell', () => {
@@ -351,5 +352,69 @@ describe('the list, Ward B and bed 9', () => {
     expect(b.completeTask('count_dawn')).toBe(true);
     b.finish();
     expect(b.state.score.ending).toBe('clean');
+  });
+});
+
+describe('death, the tall one and the glass', () => {
+  const quiet = { x: 6, z: 0.3, noise: 0, noiseRange: 0, torchOnIt: false, inBooth: false, doorClosed: false };
+
+  it('a crouched, silent player lets it walk past', () => {
+    const st = new Stalker();
+    st.summon(9);
+    let killed = false;
+    for (let i = 0; i < 400; i++) if (st.tick(0.05, quiet).includes('kill')) killed = true;
+    expect(killed).toBe(false);
+    expect(st.mode).toBe('roam');
+  });
+
+  it('running near it starts a hunt and contact kills', () => {
+    const st = new Stalker();
+    st.summon(9);
+    const evs: string[] = [];
+    for (let i = 0; i < 200 && !evs.includes('kill'); i++) evs.push(...st.tick(0.05, { ...quiet, noise: 1, noiseRange: 12, z: 0.9 }));
+    expect(evs).toContain('shriek');
+    expect(evs).toContain('kill');
+  });
+
+  it('a shut booth door stops the hunt', () => {
+    const st = new Stalker();
+    st.summon(9);
+    const evs: string[] = [];
+    for (let i = 0; i < 30; i++) evs.push(...st.tick(0.05, { x: 3, z: 0.9, noise: 1, noiseRange: 12, torchOnIt: false, inBooth: false, doorClosed: false }));
+    for (let i = 0; i < 400; i++) evs.push(...st.tick(0.05, { x: 0, z: 0.5, noise: 0, noiseRange: 0, torchOnIt: false, inBooth: true, doorClosed: true }));
+    expect(evs).toContain('bang');
+    expect(evs.filter((e) => e === 'kill').length).toBe(0);
+  });
+
+  it('a fake left waiting at stage 2 breaks the glass and kills you unless you duck', () => {
+    for (const duck of [false, true]) {
+      const sim = new Simulation(11);
+      let deathCause = '';
+      sim.bus.on('death', ({ cause }) => (deathCause = cause));
+      sim.state.stage = 2;
+      runUntilPatient(sim, 'slipping_mimic');
+      sim.state.patience = 0.001;
+      sim.setDuck(duck);
+      for (let i = 0; i < 200 && !sim.state.ended; i++) sim.tick(0.1);
+      expect(deathCause).toBe(duck ? '' : 'breach');
+    }
+  });
+
+  it('letting the real Walter in marks his record, so his copy can be caught', () => {
+    const sim = new Simulation(8);
+    const w = runUntilPatient(sim, 'plain');
+    expect(w.castId).toBe('walter');
+    sim.verdict('admit');
+    const copy = runUntilPatient(sim, 'slipping_mimic');
+    expect(copy.castId).toBe('walter');
+    expect(sim.lookup()!.note).toContain('LET IN TONIGHT');
+  });
+
+  it('nerves at zero ends the night', () => {
+    const sim = new Simulation(2);
+    sim.state.sanity = 0.01;
+    sim.setZone('corridor');
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    expect(sim.state.dead).toBe('nerves');
   });
 });

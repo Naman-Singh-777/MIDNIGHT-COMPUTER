@@ -24,6 +24,6 @@ export const MEMORIES = [
 export const SENDER_LINES = [
   'He signed the paper and would not look at me.',
   'He said you would be expecting me.',
-  'It is on the slip. Is it not on the slip?',
+  'It is on the form. Is it not on the form?',
 ];
 export const STAFF = ['Sister Imogen', 'Orderly Pell', 'Night Nurse Kessler'];

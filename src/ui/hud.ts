@@ -10,7 +10,8 @@ import { QUESTION_TEXT } from '../sim/patients';
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document): T => root.querySelector(sel) as T;
 
 export function formatClock(minute: number): string {
-  const total = 22 * 60 + Math.floor(minute);
+  // 300 shift minutes cover the eight hours from 22:00 to 06:00
+  const total = 22 * 60 + Math.floor(minute * 1.6);
   const h = Math.floor(total / 60) % 24;
   const m = total % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -48,10 +49,10 @@ export class Hud {
       <div id="subtitle" class="hud"><span class="who"></span><span class="text"></span></div>
       <div id="flashlight" class="hud">F  flashlight</div>
       <div id="cards">
-        <div class="card" id="slip"><h3>Admission slip<small>Vesper Hollow Sanatorium</small></h3><dl></dl><span class="received">RECEIVED</span></div>
+        <div class="card" id="slip"><h3>Admission form<small>What they handed you</small></h3><dl></dl><span class="received">RECEIVED</span></div>
         <div class="card" id="logcard"><h3>notes</h3><div id="log"></div></div>
       </div>
-      <div id="ledgerwrap"><div class="card crt off" id="ledger"><h3>VESPER LEDGER</h3><dl><dt>STATUS</dt><dd>Standing by</dd></dl></div></div>
+      <div id="ledgerwrap"><div class="card crt off" id="ledger"><h3>HOSPITAL RECORDS</h3><dl><dt>STATUS</dt><dd>Standing by</dd></dl></div></div>
       <div id="desk">
         <div class="group"><h4>ask</h4><div class="row" id="qrow"></div></div>
         <div class="group"><h4>check</h4><div class="row" id="trow"></div></div>
@@ -72,7 +73,7 @@ export class Hud {
     });
     const trow = $('#trow');
     const tools: [string, string, () => void][] = [
-      ['Z', 'Ledger', () => this.h.lookup()],
+      ['Z', 'Records', () => this.h.lookup()],
       ['X', 'Face', () => this.h.face()],
     ];
     for (const [k, label, fn] of tools) {
@@ -85,10 +86,10 @@ export class Hud {
     }
     const vrow = $('#vrow');
     const verdicts: [Verdict, string, string, string][] = [
-      ['admit', 'A', 'Admit', 'admit'],
-      ['observe', 'O', 'Observe', 'observe'],
-      ['refuse', 'R', 'Refuse', 'refuse'],
-      ['contain', 'L', 'Lever', 'contain'],
+      ['admit', 'A', 'Let in', 'admit'],
+      ['observe', 'O', 'Hold', 'observe'],
+      ['refuse', 'R', 'Turn away', 'refuse'],
+      ['contain', 'T', 'Trapdoor', 'contain'],
     ];
     for (const [v, k, label, cls] of verdicts) {
       const b = document.createElement('button');
@@ -237,7 +238,7 @@ export class Hud {
       <dt>NEXT OF KIN</dt><dd>${esc(e.kin)}</dd>
       <dt>WRISTBAND</dt><dd>${esc(e.wristband)}</dd>
       <dt>PHOTO</dt><dd>${esc(e.photoMark)}</dd>
-      ${e.note ? `<dt>NOTE</dt><dd>${esc(e.note)}</dd>` : ''}`;
+      ${e.note ? `<dt>NOTES</dt><dd>${esc(e.note)}</dd>` : ''}`;
     el.classList.remove('off');
   }
 

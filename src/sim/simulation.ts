@@ -3,6 +3,9 @@ import { Rng } from '../core/rng';
 import { SHIFT00, SHIFT00_BREAKER_AT, SHIFT00_END, SHIFT00_FINALE_AT } from '../data/shift00';
 import { BEATS } from '../data/story';
 import { MOTHER_ENTRY, MOTHER_ID, TODO, WARD_B_START } from '../data/motive';
+import { CAST, CAST_BY_ID, COPY_GREET } from '../data/cast';
+import { Stalker, type StalkerInput } from './stalker';
+import { swapDigits } from './patients';
 import { Director } from './director';
 import { distortionFor } from './perception';
 import { QUESTION_TEXT, makePatient, makeRegistry } from './patients';
@@ -12,6 +15,8 @@ import type {
   QuestionId,
   RegistryEntry,
   ShiftScore,
+  DeathCause,
+  ShiftSlot,
   TaskId,
   TodoItem,
   WardCount,
@@ -55,6 +60,8 @@ export interface SimState {
   todo: TodoItem[];
   admittedHumans: number;
   motherTaken: boolean;
+  dead: DeathCause | null;
+  breach: { phase: 'crack' | 'inside'; t: number } | null;
 }
 
 export interface AskResult {
@@ -115,7 +122,80 @@ export class Simulation {
       todo: TODO.map((t) => ({ ...t, shown: false, done: false, missed: false })),
       admittedHumans: 0,
       motherTaken: false,
+      dead: null,
+      breach: null,
     };
+    this.addCastRecords();
+  }
+
+  /** Records for the named visitors, so a copy of someone pulls up the same record. */
+  private addCastRecords(): void {
+    const filler = makeRegistry(this.rng, CAST.length);
+    CAST.forEach((c, i) => {
+      const f = filler[i];
+      this.state.registry.push({ ...f, id: `C_${c.id}`, name: c.name, photoMark: c.mark, note: c.note ?? '' });
+    });
+  }
+
+  readonly stalker = new Stalker();
+  private stalkerIn: StalkerInput = { x: 0, z: 0.5, noise: 0, noiseRange: 0, torchOnIt: false, inBooth: true, doorClosed: false };
+
+  /** Where the player is and how loud they are. Presentation calls this every frame. */
+  setPlayer(i: StalkerInput): void {
+    this.stalkerIn = i;
+  }
+
+  /** Brings the tall one into the corridor. */
+  summonStalker(x: number, life = Infinity): void {
+    for (const e of this.stalker.summon(x, life)) this.bus.emit('stalker', { event: e });
+  }
+
+  die(cause: DeathCause): void {
+    const s = this.state;
+    if (s.ended) return;
+    s.dead = cause;
+    s.ended = true;
+    this.bus.emit('death', { cause });
+  }
+
+  private runStalker(dt: number): void {
+    const s = this.state;
+    this.stalker.rage = s.score.admittedUnderstudies;
+    for (const e of this.stalker.tick(dt, this.stalkerIn)) {
+      this.bus.emit('stalker', { event: e });
+      if (e === 'kill') this.die('stalker');
+      if (e === 'shriek') this.spike(0.6, 3);
+      if (e === 'growl') this.spike(0.3, 0);
+    }
+    if (this.stalker.active) {
+      const d = Math.hypot(this.stalkerIn.x - this.stalker.x, this.stalkerIn.z - this.stalker.z);
+      if (d < 6) s.fear = Math.min(1, s.fear + dt * (6 - d) * 0.05);
+    }
+  }
+
+  /** A fake left waiting too long at the glass does not leave. It comes through. Duck under the desk and stay down. */
+  private runBreach(dt: number): void {
+    const s = this.state;
+    const b = s.breach;
+    if (!b) return;
+    b.t += dt;
+    if (b.phase === 'crack' && b.t > 8) {
+      b.phase = 'inside';
+      b.t = 0;
+      this.bus.emit('breach', { phase: 'inside' });
+      this.spike(0.9, 10);
+    } else if (b.phase === 'inside') {
+      if (!this.ducked && s.zone === 'booth' && b.t > 0.9) {
+        this.die('breach');
+        return;
+      }
+      if (b.t > 6) {
+        s.breach = null;
+        this.bus.emit('breach', { phase: 'over' });
+        this.leave('timeout');
+        this.summonStalker(3, 70);
+      }
+    }
   }
 
   get distortion() {
@@ -139,6 +219,10 @@ export class Simulation {
     this.runStory();
     this.runTodo();
     this.runStare(dt);
+    this.runStalker(dt);
+    this.runBreach(dt);
+    if (s.sanity <= 0) this.die('nerves');
+    if (s.ended) return;
     this.runBreaker();
     this.runPatients(dt);
     this.runConsequences();
@@ -167,6 +251,7 @@ export class Simulation {
       if (!t.shown && s.minute >= t.at) {
         t.shown = true;
         changed = true;
+        if (t.id === 'count_dawn') this.summonStalker(13.5);
       }
       if (t.shown && !t.done && !t.missed && s.minute >= t.due && t.id !== 'count_dawn') {
         t.missed = true;
@@ -175,7 +260,7 @@ export class Simulation {
         this.spike(0.15, 4);
         const line =
           t.id === 'count1'
-            ? 'Pell. Nobody did the half past twelve count. So nobody knows how many are in there. I am not going to be the one who checks.'
+            ? "Pell. Nobody did the head count. So nobody knows how many are in there. I'm not going to be the one who checks."
             : "Matron's office. Your list was on the desk, Officer. It is still on the desk.";
         this.say(`miss_${t.id}`, line, t.id === 'count1' ? 'Orderly Pell' : "Matron's Office");
       }
@@ -206,8 +291,8 @@ export class Simulation {
       if (id === 'count1') {
         if (count.extras > 0) {
           this.spike(0.6, 8);
-          this.say('count1_res', `You got ${count.actual}? The register says ${count.register}. Do not count again. Come back to the desk and do not count again.`, 'Orderly Pell', true);
-        } else this.say('count1_res', `${count.register}. Same as my sheet. Good. I will stop counting now.`, 'Orderly Pell', true);
+          this.say('count1_res', `You got ${count.actual}? My sheet says ${count.register}. Don't count again. Get back to your desk and shut the door.`, 'Orderly Pell', true);
+        } else this.say('count1_res', `${count.register}. Same as my sheet. Good. Good. I'll stop counting now.`, 'Orderly Pell', true);
       }
     }
     return true;
@@ -243,10 +328,10 @@ export class Simulation {
   }
 
   // ---------------------------------------------------------------- story
-  private say(id: string, text: string, speaker = 'Sister Imogen', call = false): void {
+  private say(id: string, text: string, speaker = 'Sister Imogen', call = false, wrong = false): void {
     if (this.storyDone.has(id)) return;
     this.storyDone.add(id);
-    this.bus.emit('story', { id, text, speaker, call });
+    this.bus.emit('story', { id, text, speaker, call, wrong });
   }
 
   private runStory(): void {
@@ -264,7 +349,7 @@ export class Simulation {
       if (b.needsFinale && !s.finaleDone) continue;
       // never talk over the officer's own interview; wait for a gap
       if (s.phase === 'present' && s.asked.length > 0 && s.minute < b.at + 8) continue;
-      this.say(b.id, b.text, b.who, b.call ?? false);
+      this.say(b.id, b.text, b.who, b.call ?? false, b.wrong ?? false);
       return;
     }
   }
@@ -334,8 +419,9 @@ export class Simulation {
       s.breakerTripped = true;
       s.powerOn = false;
       this.bus.emit('powerChanged', { on: false });
-      this.bus.emit('taskChanged', { id: 'breaker', text: 'Restore power at the east breaker panel (east corridor).', done: false });
+      this.bus.emit('taskChanged', { id: 'breaker', text: 'Power is out. Get to the fuse box at the far end of the corridor. Something is out there. Crouch.', done: false });
       this.spike(0.5, 4);
+      this.summonStalker(11.6);
     }
   }
 
@@ -347,6 +433,7 @@ export class Simulation {
     this.bus.emit('taskChanged', { id: 'breaker', text: 'Power restored.', done: true });
     this.bus.emit('cue', { cue: 'power_back', intensity: 0.5 });
     s.sanity = clamp(s.sanity + 4, 0, 100);
+    this.stalker.summon(this.stalker.x, 25);
     return true;
   }
 
@@ -375,15 +462,27 @@ export class Simulation {
         const slot = SHIFT00[s.slotIndex];
         if (slot && s.minute >= slot.at) {
           s.slotIndex++;
-          this.spawn(slot.special === 'mother' ? this.makeMother(slot.quirk ?? '') : this.makeFromSlot(slot.archetype, slot.quirk ?? ''));
+          this.spawn(slot.special === 'mother' ? this.makeMother(slot.quirk ?? '') : slot.cast ? this.makeCast(slot) : this.makeFromSlot(slot.archetype, slot.quirk ?? ''));
         }
       }
     } else if (s.phase === 'approaching' && s.phaseTime > 3.5) {
       s.phase = 'present';
       s.phaseTime = 0;
     } else if (s.phase === 'present') {
-      if (s.powerOn) s.patience -= dt / (s.asked.length ? 330 : 170);
-      if (s.patience <= 0) this.leave('timeout');
+      const p = s.current;
+      if (!p) {
+        s.phase = 'none';
+        return;
+      }
+      const angry = p.truth === 'understudy' && s.stage >= 2;
+      if (s.powerOn && !s.breach) s.patience -= dt / (angry ? 110 : s.asked.length ? 330 : 170);
+      if (s.patience <= 0 && !s.breach) {
+        if (angry) {
+          s.breach = { phase: 'crack', t: 0 };
+          this.bus.emit('breach', { phase: 'crack' });
+          this.spike(0.5, 3);
+        } else this.leave('timeout');
+      }
     } else if (s.phase === 'leaving' && s.phaseTime > 2.6) {
       s.phase = 'none';
       s.phaseTime = 0;
@@ -391,10 +490,32 @@ export class Simulation {
     }
   }
 
+  /** A named visitor, or a fake wearing one. */
+  private makeCast(slot: ShiftSlot): Patient {
+    const s = this.state;
+    const c = CAST_BY_ID[slot.cast!];
+    const entry = s.registry.find((r) => r.id === `C_${c.id}`)!;
+    const p = makePatient({ rng: this.rng, entry, archetype: slot.archetype, stage: s.stage, previous: s.history, quirk: c.quirk, seq: ++s.seq });
+    p.castId = c.id;
+    p.greet = slot.copy ? COPY_GREET[c.id] ?? c.greet : c.greet;
+    if (c.typo && p.truth === 'human') {
+      p.docs.slipDob = swapDigits(entry.dob);
+      if (!p.tells.includes('clerk_typo')) p.tells.push('clerk_typo');
+    }
+    const fill = (t: string): string => t.replace(/\{dob\}/g, p.answers.dob).replace(/\{sender\}/g, p.answers.sender).replace(/\{kin\}/g, p.answers.kin);
+    for (const q of ['name', 'dob', 'sender', 'kin'] as QuestionId[]) {
+      const t = c.say[q];
+      if (t) p.answers[q] = fill(t);
+    }
+    if (c.say.memory && !p.tells.includes('borrowed_memory')) p.answers.memory = c.say.memory;
+    if (slot.copy) p.quirk = `${c.quirk} Bone dry.`;
+    return p;
+  }
+
   private makeFromSlot(archetype: Patient['archetype'], quirk: string): Patient {
     const s = this.state;
     const used = new Set(s.history.map((p) => p.registryId));
-    const pool = s.registry.filter((r) => r.id !== MOTHER_ID && r.id !== 'R900' && !used.has(r.id) && !s.queue.some((q) => q.registryId === r.id));
+    const pool = s.registry.filter((r) => r.id !== MOTHER_ID && r.id !== 'R900' && !r.id.startsWith('C_') && !used.has(r.id) && !s.queue.some((q) => q.registryId === r.id));
     const entry = pool[this.rng.int(0, pool.length - 1)];
     if (archetype === 'tragic') {
       entry.kin = `${entry.name.split(' ')[0]} Jr.`;
@@ -437,7 +558,8 @@ export class Simulation {
     };
     s.registry.push(entry);
     const p = makePatient({ rng: this.rng, entry, archetype: 'voice_mimic', stage: 7, previous: s.history, quirk: 'The voice on the gate intercom is warm and exactly right. Almost.', seq: ++s.seq });
-    p.answers.memory = 'Mind the ledger, love.';
+    p.answers.memory = "I looked in on your mam, pet. She's grand. Open up now, it's perishing out here.";
+    p.greet = "It's Imogen, pet. I've locked myself out, would you believe it. Open the gate for me.";
     return p;
   }
 
@@ -499,7 +621,12 @@ export class Simulation {
     const mimic = p.truth === 'understudy';
     let wrong = false;
 
-    if (v === 'admit' && !mimic) s.admittedHumans++;
+    if (v === 'admit' && !mimic) {
+      s.admittedHumans++;
+      const e = this.registryOf(p);
+      e.note = `${e.note ? e.note + ' ' : ''}LET IN TONIGHT. ON THE WARD NOW.`;
+    }
+    if (s.breach) s.breach = null;
     if (v === 'admit' && p.registryId === MOTHER_ID) s.motherTaken = true;
     if (!mimic) {
       if (v === 'refuse') {
@@ -569,19 +696,20 @@ export class Simulation {
       if (!p) continue;
       switch (c.kind) {
         case 'ward_incident':
-          this.say(`inc_${p.id}`, 'Ward B, Pell here. The new admission asked me for my name. Then said it back to me before I answered. Did you let someone through, Officer?', 'Orderly Pell');
+          this.say(`inc_${p.id}`, "Pell! The one you sent up asked me my name, then said it back before I'd answered. It's gone out into the corridor. Shut your door.", 'Orderly Pell');
           this.spike(0.7, 8);
           this.bus.emit('cue', { cue: 'overhead_steps', intensity: 0.8 });
           this.bus.emit('cue', { cue: 'whisper', intensity: 0.8 });
+          this.summonStalker(13.5, 90);
           break;
         case 'observation_breach':
           this.bumpStage();
-          this.say(`obs_${p.id}`, 'Observation room is open. The door was not forced. It was asked nicely.', 'Night Nurse Kessler');
+          this.say(`obs_${p.id}`, 'Kessler. The observation room is open. Nobody forced the door. Close yours.', 'Night Nurse Kessler');
           this.spike(0.8, 8);
           this.bus.emit('cue', { cue: 'door_creak', intensity: 0.9 });
           break;
         case 'window_return':
-          this.say(`ret_${p.id}`, `Someone is at the window again. It looks like ${p.displayName}. No coat.`, 'Orderly Pell');
+          this.say(`ret_${p.id}`, p.truth === 'understudy' ? `Someone's at your window again. Looks like ${p.displayName}. Soaking. No, wait. Bone dry.` : `${p.displayName} is back at your window. Soaked through. Says there's nowhere else to go.`, 'Orderly Pell');
           this.spike(0.3, 3);
           this.bus.emit('cue', { cue: p.truth === 'understudy' ? 'window_tap' : 'knock', intensity: 0.7 });
           if (p.truth === 'understudy') {

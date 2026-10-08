@@ -60,6 +60,8 @@ export interface Patient {
   hue: number; // 0..1 clothing hue
   height: number; // body scale
   sprite: number; // body shape variant
+  castId?: string;
+  greet?: string;
 }
 
 export interface ShiftSlot {
@@ -68,6 +70,8 @@ export interface ShiftSlot {
   quirk?: string;
   story?: string;
   special?: 'mother';
+  cast?: string; // who from src/data/cast.ts
+  copy?: boolean; // a fake wearing that person
 }
 
 export type TaskId = 'mop' | 'file' | 'count1' | 'count_dawn';
@@ -92,6 +96,7 @@ export interface WardCount {
 }
 
 export type Ending = 'clean' | 'crowded' | 'taken' | 'absent';
+export type DeathCause = 'stalker' | 'breach' | 'nerves';
 
 export type ConsequenceKind =
   | 'ward_incident' // admitted an understudy
@@ -141,12 +146,15 @@ export type SimEvents = {
   consequence: { c: Consequence; patient: Patient };
   powerChanged: { on: boolean };
   taskChanged: { id: string; text: string; done: boolean };
-  story: { id: string; text: string; speaker?: string; call?: boolean };
+  story: { id: string; text: string; speaker?: string; call?: boolean; wrong?: boolean };
   stare: { on: boolean; hit: boolean };
   hallucination: { kind: 'phantom_step' | 'phantom_knock' | 'whisper_name' | 'shadow_figure' };
   shiftEnded: { score: ShiftScore };
   todo: { items: TodoItem[] };
   wardCounted: { id: TaskId; count: WardCount };
+  stalker: { event: import('./stalker').StalkerEvent };
+  breach: { phase: 'crack' | 'inside' | 'over' };
+  death: { cause: DeathCause };
 };
 
 export interface ShiftScore {

@@ -19,6 +19,9 @@ export interface FaceLook {
   eye: string;
   glasses: boolean;
   stubble: boolean;
+  lipstick?: boolean;
+  moustache?: boolean;
+  grime?: number;
 }
 
 const S = 4; // canvas pixels per face unit
@@ -323,7 +326,7 @@ export function drawFace(look: FaceLook, p: Patient, stage: number, state: FaceS
   }
 
   // ---------------------------------------------------------------- mouth
-  const lip = look.female ? [150, 60, 64] : [150, 92, 84];
+  const lip = look.lipstick ? [168, 22, 38] : look.female ? [150, 60, 64] : [150, 92, 84];
   const lipCol = (a: number): string => `rgba(${lip[0] - (mimic ? 30 : 0)},${lip[1]},${lip[2]},${a})`;
   const my = 99;
   // the Understudy's smile keeps going past where a mouth stops
@@ -402,6 +405,22 @@ export function drawFace(look: FaceLook, p: Patient, stage: number, state: FaceS
         for (let k = 0; k < 3; k++) curve(g, [64 + sd * (half - 1), my - curl * 0.3 + k, 64 + sd * (half + 5), my - 4 - k * 2, 64 + sd * (half + 9), my - 9 - k * 3], 'rgba(60,30,26,0.35)', 0.4);
       }
     }
+  }
+
+  if (look.moustache && !reveal) {
+    g.strokeStyle = look.hairColor;
+    g.lineWidth = 0.5;
+    for (let i = 0; i < 160; i++) {
+      const x = 64 + n.range(-15, 15);
+      const y = 90 + n.range(-1.5, 2.5) + Math.abs(x - 64) * 0.12;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (x - 64) * 0.08, y + n.range(1.5, 3.5));
+      g.stroke();
+    }
+  }
+  if (look.grime && !reveal) {
+    for (let i = 0; i < 18; i++) blob(g, n.range(10, 118), n.range(20, 124), n.range(5, 14), n.range(4, 10), 'rgba(20,18,16,A)', look.grime * n.range(0.2, 0.5));
   }
 
   // ---------------------------------------------------------------- the mark the photograph should match

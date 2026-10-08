@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { Physics, DynamicProp } from '../physics/world';
 import { DrawSurface, StaticBatch, makeMaterials, type Mats } from './materials';
 import { Rain } from './rain';
+import { buildDesk } from './desk';
 
 export interface Interact {
   id: 'door' | 'lever' | 'breaker' | 'chair' | 'phone' | 'prop' | 'stain' | 'cabinet' | 'wardslot';
@@ -88,9 +89,7 @@ export function buildEnvironment(physics: Physics): Env {
   solid(mats.woodDark, T + 0.04, 0.9, 3.0, -1.78, 0.45, 0.3, false);
   solid(mats.woodDark, 3.6, 0.9, 0.04, 0, 0.45, 1.77, false);
 
-  // desk
-  solid(mats.woodDark, 3.4, 0.74, 0.8, 0, 0.37, -0.78);
-  solid(mats.wood, 3.5, 0.05, 0.9, 0, 0.765, -0.78, false, 0.8);
+  // desk: modelled in desk.ts (collider added there)
   // filing cabinet + shelf
   solid(mats.metal, 0.5, 1.2, 0.6, -1.45, 0.6, 1.4);
   solid(mats.woodDark, 0.3, 0.05, 1.6, -1.62, 1.7, 0.5, false);
@@ -179,47 +178,8 @@ export function buildEnvironment(physics: Physics): Env {
   flash.position.set(-3, 6, -9);
   scene.add(flash);
 
-  // lamp model
-  const lampGroup = new THREE.Group();
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.04, 14), mats.brass);
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.62, 8), mats.brass);
-  arm.position.set(0, 0.33, 0);
-  const shade = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.2, 16, 1, true), new THREE.MeshLambertMaterial({ color: 0x1f5a44, side: THREE.DoubleSide }));
-  shade.position.set(-0.03, 0.66, 0.0);
-  const lampBulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), mats.emissiveWarm);
-  lampBulb.position.set(-0.03, 0.62, 0);
-  lampGroup.add(base, arm, shade, lampBulb);
-  lampGroup.position.set(1.1, 0.79, -0.9);
-  scene.add(lampGroup);
-
-  // CRT
-  const crtGroup = new THREE.Group();
-  const crtBody = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.48), new THREE.MeshLambertMaterial({ color: 0x8c8470 }));
-  const crtBack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.34, 0.3), new THREE.MeshLambertMaterial({ color: 0x77705e }));
-  crtBack.position.set(0, 0, -0.3);
-  const crt = new DrawSurface(512, 384);
-  const crtScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.33), new THREE.MeshBasicMaterial({ map: crt.texture, toneMapped: false }));
-  crtScreen.position.set(0, 0.02, 0.245);
-  crtGroup.add(crtBody, crtBack, crtScreen);
-  crtGroup.position.set(-0.95, 1.04, -0.85);
-  crtGroup.rotation.y = 0.3;
-  scene.add(crtGroup);
-
-  // slip on desk
-  const slip = new DrawSurface(256, 320);
-  const slipMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.35), new THREE.MeshLambertMaterial({ map: slip.texture }));
-  slipMesh.rotation.set(-Math.PI / 2 + 0.25, 0, 0.08);
-  slipMesh.position.set(0.05, 0.795, -0.5);
-  scene.add(slipMesh);
-
-  // phone
-  const phone = new THREE.Group();
-  const phoneBody = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.2), mats.black);
-  const phoneLed = new THREE.Mesh(new THREE.SphereGeometry(0.01, 6, 6), new THREE.MeshBasicMaterial({ color: 0x331100 }));
-  phoneLed.position.set(0.08, 0.05, 0.1);
-  phone.add(phoneBody, phoneLed);
-  phone.position.set(-0.3, 0.84, -0.9);
-  scene.add(phone);
+  // the desk and everything on it
+  const { lampBulb, crt, crtScreen, slip, slipMesh, phoneLed } = buildDesk(scene, physics, mats);
 
   // containment lever (east wall, inside booth)
   const leverBase = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.3, 0.22), mats.metal);
@@ -390,9 +350,6 @@ export function buildEnvironment(physics: Physics): Env {
     scene.add(mesh);
     props.push({ mesh, phys: physics.addDynamicCylinder(x, y, z, h / 2, r, mass) });
   };
-  addCylProp(new THREE.MeshLambertMaterial({ color: 0xd9d2c0 }), 0.04, 0.09, -0.15, 0.85, -0.55, 0.3, 'Mug');
-  addBoxProp(mats.rust, 0.08, 0.06, 0.08, 0.62, 0.82, -0.62, 0.4, 'Stamp');
-  addBoxProp(mats.paper, 0.22, 0.02, 0.3, -0.5, 0.8, -0.35, 0.3, 'Clipboard');
   addCylProp(mats.metal, 0.17, 0.3, 4.6, 0.2, 0.4, 1.5, 'Bucket');
   addBoxProp(mats.woodDark, 0.5, 0.4, 0.5, 8.7, 0.25, 0.5, 6, 'Crate');
   addBoxProp(mats.woodDark, 0.5, 0.4, 0.5, 8.8, 0.65, 0.55, 5, 'Crate');

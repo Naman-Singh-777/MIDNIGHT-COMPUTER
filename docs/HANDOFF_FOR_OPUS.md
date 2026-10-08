@@ -1,5 +1,7 @@
 # Handoff for Claude Opus
 
+**Latest round: see `docs/TASKS.md`.** It supersedes the sections below where they disagree (names like Understudy, ledger and lamp are no longer player-facing).
+
 Full status report and phased roadmap: `docs/PROJECT_REPORT_AND_ROADMAP.md`. Read it first. This file is the short version.
 
 You are continuing a web horror game. Read this file first, then `CLAUDE.md`, then `docs/generated/PROJECT_STATE.md`. Do not restart anything. Build on what is here.

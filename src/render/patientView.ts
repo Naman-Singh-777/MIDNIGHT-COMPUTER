@@ -1,7 +1,10 @@
 import * as THREE from 'three';
-import { Rng } from '../core/rng';
-import type { Archetype, Patient, Verdict } from '../sim/types';
-import { drawFace, fabricTexture, sculptHead, type FaceState } from './faces';
+import type { Patient, Verdict } from '../sim/types';
+import { drawFace, sculptHead, type FaceLook, type FaceState } from './faces';
+import { buildBody, type Rig } from './humanoid';
+import { lookFor, type Look } from './looks';
+
+export const FEMALE_NAMES = new Set(['Ada', 'Edith', 'Margit', 'Hester', 'Dorothea', 'Agnes', 'Winifred', 'Odette', 'Philippa', 'Mabel', 'Imelda', 'Dolores', 'Mae', 'Rosa', 'Sister']);
 
 const puffTex = (() => {
   const c = document.createElement('canvas');
@@ -15,155 +18,32 @@ const puffTex = (() => {
   return new THREE.CanvasTexture(c);
 })();
 
-export const FEMALE_NAMES = new Set(['Ada', 'Edith', 'Margit', 'Hester', 'Dorothea', 'Agnes', 'Winifred', 'Odette', 'Philippa', 'Mabel', 'Imelda']);
-
-type HairKind = 'none' | 'short' | 'slick' | 'bun' | 'long' | 'scarf' | 'habit';
-type HatKind = 'none' | 'trilby' | 'flat' | 'cloche';
-type PropKind = 'none' | 'umbrella' | 'goose' | 'redcap' | 'folder' | 'bag';
-type PoseKind = 'rest' | 'hold' | 'hug' | 'folded' | 'bag';
-type CoatKind = 'overcoat' | 'cardigan' | 'suit' | 'cape';
-
-interface Look {
-  female: boolean;
-  age: number; // years, drives wrinkles
-  skin: [number, number, number];
-  hair: HairKind;
-  hairColor: string;
-  hat: HatKind;
-  coat: CoatKind;
-  coatColor: THREE.Color;
-  eye: string;
-  glasses: boolean;
-  stubble: boolean;
-  prop: PropKind;
-  pose: PoseKind;
-  shoulder: number; // width scale
-}
-
-const SKIN: [number, number, number][] = [
-  [236, 204, 180],
-  [224, 186, 158],
-  [206, 166, 132],
-  [168, 124, 94],
-  [124, 90, 66],
-];
-const HAIR = ['#14100d', '#2b1d14', '#4a3222', '#6b6560', '#b8b4aa', '#7a3b1c', '#b39a63'];
-const EYES = ['#4b3623', '#2f4a6a', '#56694a', '#6b5a3b', '#1f1a16'];
-
-function lookFor(p: Patient): Look {
-  const rng = new Rng((Math.floor(p.hue * 1e6) ^ (p.sprite * 7919) ^ Math.floor(p.height * 1e4)) >>> 0);
-  const female = FEMALE_NAMES.has(p.displayName.split(' ')[0] ?? '');
-  const t = rng.next();
-  const skin = SKIN[t < 0.55 ? 0 : t < 0.8 ? 1 : t < 0.9 ? 2 : t < 0.96 ? 3 : 4];
-  const a: Archetype = p.archetype;
-  if (p.registryId === 'R209') {
-    // Ada Wren. Grey bun, ward cardigan over a nightdress, nothing on her feet.
-    return {
-      female: true, age: 64, skin: SKIN[0], hair: 'bun', hairColor: '#b8b4aa', hat: 'none', coat: 'cardigan',
-      coatColor: new THREE.Color().setHSL(0.09, 0.2, 0.42), eye: EYES[1], glasses: false, stubble: false,
-      prop: 'none', pose: 'folded', shoulder: 0.84,
-    };
-  }
-  const base: Look = {
-    female,
-    age: 45,
-    skin,
-    hair: female ? 'bun' : 'short',
-    hairColor: rng.pick(HAIR),
-    hat: 'none',
-    coat: 'overcoat',
-    coatColor: new THREE.Color().setHSL(0.08 + p.hue * 0.05, 0.3, 0.2),
-    eye: rng.pick(EYES),
-    glasses: false,
-    stubble: false,
-    prop: 'none',
-    pose: 'rest',
-    shoulder: female ? 0.9 : 1,
-  };
-  switch (a) {
-    case 'plain':
-      return { ...base, age: 52 + rng.int(-6, 8), hat: female ? 'cloche' : 'trilby', prop: 'umbrella', pose: 'bag', glasses: rng.chance(0.4), stubble: !female && rng.chance(0.5) };
-    case 'chatty':
-      return {
-        ...base,
-        age: 44 + rng.int(-8, 10),
-        hat: female ? 'cloche' : 'flat',
-        coat: 'overcoat',
-        coatColor: new THREE.Color().setHSL(0.2, 0.25, 0.24),
-        prop: 'goose',
-        pose: 'hug',
-        glasses: true,
-        stubble: !female,
-      };
-    case 'strange_innocent':
-      return {
-        ...base,
-        age: 24 + rng.int(-3, 6),
-        hair: 'long',
-        hat: 'none',
-        coat: 'cardigan',
-        coatColor: new THREE.Color().setHSL(0.1, 0.28, 0.5),
-        pose: 'folded',
-        shoulder: 0.88,
-        hairColor: rng.pick(HAIR.slice(1, 5)),
-      };
-    case 'tragic':
-      return {
-        ...base,
-        female: true,
-        age: 41 + rng.int(-4, 8),
-        hair: 'scarf',
-        hairColor: '#4c4a47',
-        coat: 'overcoat',
-        coatColor: new THREE.Color().setHSL(0.62, 0.22, 0.14),
-        prop: 'redcap',
-        pose: 'hold',
-        shoulder: 0.86,
-      };
-    case 'slipping_mimic':
-      return { ...base, age: 38, hat: female ? 'cloche' : 'trilby', coatColor: new THREE.Color().setHSL(0.1, 0.1, 0.27), prop: 'none', pose: 'rest', stubble: false, glasses: false };
-    case 'fluent_mimic':
-      return {
-        ...base,
-        age: 46,
-        hair: female ? 'slick' : 'slick',
-        hairColor: '#1b1613',
-        coat: 'suit',
-        coatColor: new THREE.Color().setHSL(0.6, 0.1, 0.14),
-        prop: 'folder',
-        pose: 'hold',
-        glasses: false,
-        stubble: false,
-      };
-    case 'voice_mimic':
-      return { ...base, female: true, age: 35, hair: 'habit', coat: 'cape', coatColor: new THREE.Color().setHSL(0.62, 0.3, 0.1), pose: 'folded', prop: 'none', shoulder: 0.9 };
-  }
-}
-
 export type ViewPhase = 'none' | 'approaching' | 'present' | 'leaving';
-
-interface ArmRig {
-  sh: THREE.Group;
-  el: THREE.Group;
-  hand: THREE.Mesh;
-  side: number;
-}
-
-const POSES: Record<PoseKind, { a: number; b: number; inward: number; elIn: number }> = {
-  rest: { a: 0.04, b: 0.12, inward: 0.03, elIn: 0 },
-  bag: { a: 0.1, b: 0.5, inward: 0.02, elIn: 0 },
-  hold: { a: 0.45, b: 1.3, inward: 0.55, elIn: 0.65 },
-  hug: { a: 0.5, b: 1.4, inward: 0.5, elIn: 0.6 },
-  folded: { a: 0.5, b: 1.5, inward: 0.65, elIn: 0.85 },
+type ArmPose = { sh: number; el: number; out: number };
+const POSES: Record<string, ArmPose> = {
+  rest: { sh: 0.06, el: -0.12, out: 0.08 },
+  hold: { sh: -0.35, el: -1.0, out: -0.12 },
+  hug: { sh: -0.45, el: -1.1, out: -0.3 },
+  folded: { sh: -0.15, el: -1.25, out: -0.42 },
+  bag: { sh: 0.04, el: -0.08, out: 0.12 },
+  glass: { sh: -1.5, el: -0.12, out: -0.1 },
 };
 
+const HEAD_SCALE = 0.84;
+
+/**
+ * One visitor at a time. Full jointed body from humanoid.ts, a sculpted painted head on top.
+ * Behaviour that reaches out of the hall: a fake presses its hands and face to the glass when it stares,
+ * stands in the corner of the hall after you turn it away, and comes through the window when kept waiting.
+ */
 export class PatientView {
   readonly group = new THREE.Group();
-  private root = new THREE.Group();
+  /** Character lights live outside the group so hiding the group never changes the light count. */
+  readonly rig = new THREE.Group();
+  private rim = new THREE.PointLight(0x9ab8d0, 0, 2.4, 1.6);
+  private under = new THREE.PointLight(0xffa860, 0, 1.7, 1.8);
+  private body: Rig | null = null;
   private head = new THREE.Group();
-  private torso = new THREE.Group();
-  private propGroup = new THREE.Group();
-  private arms: ArmRig[] = [];
   private faceMat: THREE.MeshLambertMaterial | null = null;
   private faces: Record<FaceState, THREE.CanvasTexture> | null = null;
   private owned: { dispose: () => void }[] = [];
@@ -172,6 +52,7 @@ export class PatientView {
   private look: Look | null = null;
   private stage = 0;
   private t = 0;
+  private walkPh = 0;
   private from = new THREE.Vector3();
   private to = new THREE.Vector3();
   private verdict: Verdict | 'timeout' | null = null;
@@ -179,26 +60,26 @@ export class PatientView {
   private blinkT = 0;
   private stare = false;
   private shown: FaceState = 'open';
-  speaking = 0;
-  /** Read by the game so the door and lightning can follow the patient. */
-  progress = 0;
-
-  /** Character lights live outside the group so hiding the group never changes the light count. */
-  readonly rig = new THREE.Group();
-  private rim = new THREE.PointLight(0x9ab8d0, 0, 2.4, 1.6);
-  private under = new THREE.PointLight(0xffa860, 0, 1.7, 1.8);
   private revealT = 0;
   private glimpseIn = 14;
-  /** Set by the game for a few frames when the Understudy shows what it is. */
+  private lurk = false;
+  private breach: 'crack' | 'inside' | null = null;
+  private mouthY = 1.5;
+  private press = 0;
+  /** Set by the game for a few frames when a fake shows what it is. */
   revealing = 0;
   /** Called when the face slips on its own for a frame or two. */
   onGlimpse: (() => void) | null = null;
+  speaking = 0;
+  progress = 0;
+  /** Exposed for close-up checks. */
+  get facesForTest(): Record<FaceState, THREE.CanvasTexture> | null {
+    return this.faces;
+  }
 
   constructor(private readonly spawn: THREE.Vector3, private readonly stand: THREE.Vector3) {
     this.rig.add(this.rim, this.under);
     this.group.visible = false;
-    this.group.add(this.root);
-    this.root.add(this.torso, this.head, this.propGroup);
     for (let i = 0; i < 3; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, opacity: 0, depthWrite: false, fog: false }));
       s.scale.setScalar(0.05);
@@ -208,27 +89,26 @@ export class PatientView {
   }
 
   // ------------------------------------------------------------------ build helpers
-  private mat(color: THREE.ColorRepresentation): THREE.MeshLambertMaterial {
-    const m = new THREE.MeshLambertMaterial({ color });
+  private mat = (color: THREE.ColorRepresentation, map: THREE.Texture | null = null): THREE.MeshLambertMaterial => {
+    const m = new THREE.MeshLambertMaterial({ color, map });
     this.owned.push(m);
     return m;
-  }
-  private mesh(geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x = 0, y = 0, z = 0): THREE.Mesh {
+  };
+  private mesh = (geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x = 0, y = 0, z = 0): THREE.Mesh => {
     this.owned.push(geo);
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
     m.castShadow = true;
     parent.add(m);
     return m;
-  }
+  };
 
   private clear(): void {
     for (const o of this.owned) o.dispose();
     this.owned = [];
-    this.torso.clear();
-    this.head.clear();
-    this.propGroup.clear();
-    this.arms = [];
+    if (this.body) this.group.remove(this.body.root);
+    this.body = null;
+    this.head = new THREE.Group();
     if (this.faces) for (const k of Object.keys(this.faces) as FaceState[]) this.faces[k].dispose();
     this.faces = null;
     this.faceMat = null;
@@ -240,6 +120,9 @@ export class PatientView {
     this.t = 0;
     this.stage = stage;
     this.stare = false;
+    this.lurk = false;
+    this.breach = null;
+    this.press = 0;
     this.clear();
     if (!p) {
       this.look = null;
@@ -248,276 +131,257 @@ export class PatientView {
     }
     const look = lookFor(p);
     this.look = look;
-    this.buildTorso(look, p);
-    this.buildHead(look, p);
-    this.buildProp(look, p);
-    this.root.scale.setScalar(p.height);
+    const fake = p.truth === 'understudy';
+    const skin = new THREE.Color(look.skin[0] / 255, look.skin[1] / 255, look.skin[2] / 255).multiplyScalar(0.8);
+    if (fake) skin.lerp(new THREE.Color(0x9a9c98), 0.1 + stage * 0.03);
+    this.body = buildBody(
+      {
+        height: look.height,
+        build: look.build,
+        female: look.female,
+        hunch: look.hunch,
+        skin,
+        outfit: look.outfit,
+        top: new THREE.Color(look.top),
+        bottom: new THREE.Color(look.bottom),
+        shoes: new THREE.Color(look.shoes),
+        accent: new THREE.Color(look.accent),
+        barefoot: look.barefoot,
+        armLength: fake && stage >= 3 ? 1.12 : 1,
+      },
+      { mat: (c, m) => this.mat(c, m ?? null), mesh: this.mesh },
+    );
+    this.group.add(this.body.root);
+    this.buildHead(look, p, skin);
+    this.buildProp(look);
+    this.mouthY = (0.95 + 0.04 + 0.6) * this.body.scaleY + 0.08;
     this.group.position.copy(this.spawn);
     this.group.rotation.y = 0;
     this.group.visible = true;
     this.blinkIn = 1.5 + Math.random() * 3;
   }
 
-  private coatRadius(y: number, look: Look): number {
-    const s = look.shoulder;
-    if (y < 0.55) return 0.27 + (y / 0.55) * 0.03;
-    if (y < 1.05) return 0.3 - ((y - 0.55) / 0.5) * 0.06;
-    return (0.24 + Math.min(0.06, (y - 1.05) * 0.2)) * (0.85 + s * 0.15);
-  }
-
-  private buildTorso(look: Look, p: Patient): void {
-    const mimic = p.truth === 'understudy';
-    const coat = look.coatColor.clone();
-    const coatMat = this.mat(coat);
-    const dark = this.mat(coat.clone().multiplyScalar(0.55));
-    const light = this.mat(coat.clone().multiplyScalar(1.5));
-    for (const m of [coatMat, dark, light]) m.map = fabricTexture();
-    const skin = this.mat(new THREE.Color(look.skin[0] / 255, look.skin[1] / 255, look.skin[2] / 255).multiplyScalar(0.8));
-    const s = look.shoulder;
-    // coat body: a lathe with a wider hem, then a shoulder yoke
-    const pts: THREE.Vector2[] = [];
-    const hem = look.coat === 'cardigan' ? 0.22 : look.coat === 'suit' ? 0.2 : 0.3;
-    for (let y = 0; y <= 1.4; y += 0.1) {
-      let r = this.coatRadius(y, look);
-      if (y < 0.55) r = Math.min(r, hem + (y / 0.55) * 0.06);
-      pts.push(new THREE.Vector2(Math.max(0.01, r), y));
-    }
-    pts.push(new THREE.Vector2(0.13, 1.44), new THREE.Vector2(0.001, 1.45));
-    this.mesh(new THREE.LatheGeometry(pts, 18), coatMat, this.torso);
-    const yoke = this.mesh(new THREE.SphereGeometry(0.26, 14, 10), coatMat, this.torso, 0, 1.34, 0);
-    yoke.scale.set(1 * s, 0.4, 0.62);
-    // shirt, collar, neck
-    const shirt = this.mat(look.coat === 'cardigan' ? 0xcfc6b0 : 0xe9e5da);
-    const neck = this.mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.1, 10), skin, this.torso, 0, 1.46, 0);
-    neck.scale.y = mimic && this.stage >= 3 ? 1.18 : 1;
-    this.mesh(new THREE.TorusGeometry(0.075, 0.022, 6, 14), shirt, this.torso, 0, 1.41, 0.005).rotation.x = Math.PI / 2;
-    // buttons and lapels
-    const front = (y: number): number => this.coatRadius(y, look) + 0.004;
-    if (look.coat === 'overcoat' || look.coat === 'suit') {
-      for (const y of [1.15, 0.98, 0.82]) {
-        this.mesh(new THREE.SphereGeometry(0.018, 6, 5), this.mat(0x151210), this.torso, 0, y, front(y));
-      }
-      for (const sd of [-1, 1]) {
-        const lap = this.mesh(new THREE.BoxGeometry(0.05, 0.3, 0.012), light, this.torso, sd * 0.06, 1.22, front(1.22) + 0.002);
-        lap.rotation.z = sd * 0.38;
-      }
-    }
-    if (look.coat === 'cardigan') {
-      for (const [i, y] of [1.18, 1.04, 0.9, 0.76].entries()) {
-        const col = i === 2 ? 0x7a2a2a : 0x2f2a24;
-        this.mesh(new THREE.SphereGeometry(0.019, 6, 5), this.mat(col), this.torso, 0, y, front(y));
-      }
-      // ribbed hem band
-      this.mesh(new THREE.CylinderGeometry(0.255, 0.265, 0.05, 16), dark, this.torso, 0, 0.62, 0);
-    }
-    if (look.coat === 'suit') {
-      const tie = this.mesh(new THREE.BoxGeometry(0.035, 0.22, 0.008), this.mat(0x4a1c20), this.torso, 0, 1.2, front(1.2) + 0.003);
-      tie.rotation.x = 0.04;
-      this.mesh(new THREE.BoxGeometry(0.1, 0.16, 0.006), shirt, this.torso, 0, 1.28, front(1.28) - 0.01);
-    }
-    if (look.coat === 'cape') {
-      // night staff: white bib and a dark cape
-      this.mesh(new THREE.BoxGeometry(0.22, 0.34, 0.012), this.mat(0xe8e6de), this.torso, 0, 1.12, front(1.12) + 0.003);
-      this.mesh(new THREE.SphereGeometry(0.29, 14, 8, 0, Math.PI * 2, 0, 1.1), dark, this.torso, 0, 1.2, -0.02).scale.set(1, 0.7, 0.9);
-    }
-    // wet shoulders: a darker patch for humans, the Understudy comes in dry
-    if (!mimic && look.coat !== 'cardigan') {
-      const wet = this.mesh(new THREE.SphereGeometry(0.265, 12, 6, 0, Math.PI * 2, 0, 0.8), this.mat(coat.clone().multiplyScalar(0.62)), this.torso, 0, 1.345, 0);
-      wet.scale.set(1 * s, 0.36, 0.64);
-    }
-    // arms: shoulder pivot, upper arm, elbow pivot, forearm, hand
-    const sleeve = this.mat(coat.clone().multiplyScalar(look.coat === 'cape' ? 0.9 : 1));
-    const pose = POSES[look.pose];
-    const lenScale = mimic && this.stage >= 3 ? 1.06 : 1;
-    for (const side of [-1, 1]) {
-      const sh = new THREE.Group();
-      sh.position.set(side * 0.235 * s, 1.36, 0);
-      const up = this.mesh(new THREE.CylinderGeometry(0.052, 0.046, 0.3, 8), sleeve, sh, 0, -0.15, 0);
-      up.castShadow = true;
-      const el = new THREE.Group();
-      el.position.y = -0.3;
-      sh.add(el);
-      const fore = this.mesh(new THREE.CylinderGeometry(0.044, 0.038, 0.28 * lenScale, 8), sleeve, el, 0, -0.14 * lenScale, 0);
-      fore.castShadow = true;
-      const hand = this.mesh(new THREE.SphereGeometry(0.04, 8, 6), skin, el, 0, -0.29 * lenScale, 0);
-      hand.scale.set(1.1, mimic && this.stage >= 3 ? 1.9 : 1.5, 0.7);
-      this.mesh(new THREE.SphereGeometry(0.014, 5, 4), skin, el, side * 0.035, -0.27 * lenScale, 0.015);
-      this.torso.add(sh);
-      this.arms.push({ sh, el, hand, side });
-      sh.rotation.x = -pose.a;
-      sh.rotation.z = -side * pose.inward;
-      el.rotation.x = -pose.b;
-      el.rotation.y = -side * pose.elIn * 0.4;
-      el.rotation.z = -side * pose.elIn * 0.3;
-    }
-  }
-
-  private buildHead(look: Look, p: Patient): void {
-    const skinCol = new THREE.Color(look.skin[0] / 255, look.skin[1] / 255, look.skin[2] / 255).multiplyScalar(0.8);
-    const skin = this.mat(skinCol);
+  private buildHead(look: Look, p: Patient, skin: THREE.Color): void {
+    const head = this.head;
+    head.position.y = 0.11;
+    head.scale.setScalar(HEAD_SCALE);
+    this.body!.headMount.add(head);
+    const skinMat = this.mat(skin);
     const hair = this.mat(look.hairColor);
-    this.head.position.y = 1.6;
-    const sx = look.female ? 0.88 : 0.94;
+    const sx = look.female ? 0.88 : 0.95;
     const skullGeo = new THREE.SphereGeometry(0.14, 48, 36);
     sculptHead(skullGeo, look.female);
-    const skull = this.mesh(skullGeo, skin, this.head);
-    skull.scale.set(sx, 1.12, 0.96);
-    // the face patch, mapped over the front of the skull
+    this.mesh(skullGeo, skinMat, head).scale.set(sx, 1.14, 0.98);
+    const fl: FaceLook = {
+      female: look.female,
+      age: look.age,
+      skin: look.skin,
+      hair: look.hair === 'bald' ? 'none' : look.hair,
+      hairColor: look.hairColor,
+      eye: look.eye,
+      glasses: look.glasses,
+      stubble: look.facial === 'stubble' || look.facial === 'beard',
+      lipstick: look.lipstick,
+      moustache: look.facial === 'moustache',
+      grime: look.grime,
+    };
     this.faces = {
-      open: drawFace(look, p, this.stage, 'open'),
-      blink: drawFace(look, p, this.stage, 'blink'),
-      talk: drawFace(look, p, this.stage, 'talk'),
-      stare: drawFace(look, p, this.stage, 'stare'),
-      reveal: drawFace(look, p, Math.max(this.stage, 5), 'reveal'),
+      open: drawFace(fl, p, this.stage, 'open'),
+      blink: drawFace(fl, p, this.stage, 'blink'),
+      talk: drawFace(fl, p, this.stage, 'talk'),
+      stare: drawFace(fl, p, this.stage, 'stare'),
+      reveal: drawFace(fl, p, Math.max(this.stage, 5), 'reveal'),
     };
     this.faceMat = new THREE.MeshLambertMaterial({ map: this.faces.open, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     this.owned.push(this.faceMat);
     const patchGeo = new THREE.SphereGeometry(0.1425, 48, 36, 0.57, 2.0, 0.55, 1.9);
     sculptHead(patchGeo, look.female);
-    const patch = this.mesh(patchGeo, this.faceMat, this.head);
-    patch.scale.set(sx, 1.12, 0.96);
-    patch.castShadow = false;
+    const patch = this.mesh(patchGeo, this.faceMat, head);
+    patch.scale.set(sx, 1.14, 0.98);
     this.shown = 'open';
-    // nose, ears
-    const nose = this.mesh(new THREE.SphereGeometry(0.022, 8, 6), skin, this.head, 0, -0.022, 0.13 * 0.96);
-    nose.scale.set(0.85, 1.5, 1.05);
+    // nose: a bridge and a tip, a little big, the way a caricature wants it
+    const bridge = this.mesh(new THREE.CylinderGeometry(0.009, 0.017, 0.05, 8), skinMat, head, 0, -0.005, 0.138);
+    bridge.rotation.x = -0.35;
+    const tip = this.mesh(new THREE.SphereGeometry(0.022, 10, 8), skinMat, head, 0, -0.028, 0.148);
+    tip.scale.set(p.castId === 'bernard' || p.castId === 'ivor' || p.castId === 'gus' ? 1.35 : 1, 0.9, 0.95);
     for (const sd of [-1, 1]) {
-      const ear = this.mesh(new THREE.SphereGeometry(0.03, 8, 6), skin, this.head, sd * 0.136 * sx, -0.005, -0.012);
-      ear.scale.set(0.45, 1.05, 0.75);
+      const ear = this.mesh(new THREE.SphereGeometry(0.032, 10, 8), skinMat, head, sd * 0.137 * sx, -0.004, -0.01);
+      ear.scale.set(0.38, 1.05, 0.72);
       if (p.faceMark.includes('notched right ear') && sd === 1) ear.scale.y = 0.8;
     }
     // hair
     const cap = (r: number, theta: number, tilt: number, y = 0.02): THREE.Mesh => {
-      const m = this.mesh(new THREE.SphereGeometry(r, 18, 10, 0, Math.PI * 2, 0, theta), hair, this.head, 0, y, 0);
-      m.scale.set(sx * 1.02, 1.12, 0.98);
+      const m = this.mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, theta), hair, head, 0, y, 0);
+      m.scale.set(sx * 1.02, 1.14, 1.0);
       m.rotation.x = tilt;
       return m;
     };
     switch (look.hair) {
       case 'short':
-        cap(0.148, 1.18, -0.35);
+        cap(0.148, 1.15, -0.4);
         break;
       case 'slick':
-        cap(0.147, 1.12, -0.45);
-        this.mesh(new THREE.BoxGeometry(0.004, 0.01, 0.2), this.mat('#3a3027'), this.head, 0.03, 0.155, -0.02);
+        cap(0.147, 1.1, -0.5);
+        break;
+      case 'bald':
+        cap(0.146, 0.5, -1.4, 0.0).scale.multiplyScalar(1.01);
         break;
       case 'bun':
         cap(0.148, 1.2, -0.3);
-        this.mesh(new THREE.SphereGeometry(0.06, 10, 8), hair, this.head, 0, 0.08, -0.13);
+        this.mesh(new THREE.SphereGeometry(0.058, 12, 10), hair, head, 0, 0.07, -0.135);
         break;
+      case 'curls': {
+        cap(0.15, 1.3, -0.25);
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2;
+          const c = this.mesh(new THREE.SphereGeometry(0.035, 8, 6), hair, head, Math.cos(a) * 0.12 * sx, 0.04 + Math.sin(i * 1.7) * 0.03, Math.sin(a) * 0.12 - 0.02);
+          if (Math.sin(a) > 0.6) c.position.y += 0.08;
+        }
+        break;
+      }
       case 'long': {
-        cap(0.148, 1.25, -0.3);
-        const back = this.mesh(new THREE.CylinderGeometry(0.125, 0.1, 0.34, 12, 1, true), hair, this.head, 0, -0.1, -0.06);
+        cap(0.149, 1.25, -0.3);
+        const back = this.mesh(new THREE.CylinderGeometry(0.128, 0.105, 0.34, 16, 1, true), hair, head, 0, -0.1, -0.05);
         (back.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide;
-        // damp strands over the forehead
-        for (const x of [-0.05, 0.0, 0.05]) this.mesh(new THREE.BoxGeometry(0.012, 0.07, 0.01), hair, this.head, x, 0.075, 0.13).rotation.z = x * 3;
+        for (const x of [-0.06, -0.02, 0.03, 0.065]) this.mesh(new THREE.BoxGeometry(0.014, 0.08, 0.008), hair, head, x, 0.075, 0.13).rotation.z = x * 3;
         break;
       }
       case 'scarf': {
-        const cloth = this.mat('#6b6f6a');
-        const wrap = this.mesh(new THREE.SphereGeometry(0.158, 20, 12, Math.PI / 2 + 1.05, Math.PI * 2 - 2.1, 0, 2.05), cloth, this.head, 0, 0.0, -0.01);
-        wrap.scale.set(sx * 1.04, 1.12, 1.0);
-        const top = this.mesh(new THREE.SphereGeometry(0.158, 18, 10, 0, Math.PI * 2, 0, 0.9), cloth, this.head, 0, 0.02, 0);
-        top.scale.set(sx * 1.04, 1.12, 1.0);
-        top.rotation.x = -0.2;
-        this.mesh(new THREE.SphereGeometry(0.04, 8, 6), cloth, this.head, 0, -0.14, 0.09);
+        const cloth = this.mat(0x5d615c);
+        const wrap = this.mesh(new THREE.SphereGeometry(0.159, 22, 12, Math.PI / 2 + 1.05, Math.PI * 2 - 2.1, 0, 2.05), cloth, head, 0, 0, -0.01);
+        wrap.scale.set(sx * 1.04, 1.14, 1.0);
+        this.mesh(new THREE.SphereGeometry(0.04, 8, 6), cloth, head, 0, -0.15, 0.09);
         break;
       }
       case 'habit': {
-        const white = this.mat('#e8e6de');
-        const black = this.mat('#0c0c10');
-        const coif = this.mesh(new THREE.SphereGeometry(0.155, 18, 10, 0, Math.PI * 2, 0, 1.35), white, this.head, 0, 0.02, -0.01);
-        coif.scale.set(sx * 1.04, 1.12, 1.0);
+        const white = this.mat(0xe8e6de);
+        const black = this.mat(0x0c0c10);
+        const coif = this.mesh(new THREE.SphereGeometry(0.156, 20, 10, 0, Math.PI * 2, 0, 1.35), white, head, 0, 0.02, -0.01);
+        coif.scale.set(sx * 1.04, 1.14, 1.0);
         coif.rotation.x = -0.25;
-        const veil = this.mesh(new THREE.BoxGeometry(0.34, 0.5, 0.03), black, this.head, 0, -0.1, -0.14);
+        const veil = this.mesh(new THREE.BoxGeometry(0.34, 0.52, 0.03), black, head, 0, -0.1, -0.14);
         veil.rotation.x = 0.06;
-        this.mesh(new THREE.BoxGeometry(0.29, 0.03, 0.06), white, this.head, 0, 0.105, 0.115).rotation.x = -0.35;
         break;
       }
       default:
         break;
     }
-    // hat
-    const felt = this.mat(look.coatColor.clone().multiplyScalar(0.9));
+    const felt = this.mat(new THREE.Color(look.top).multiplyScalar(0.85));
     if (look.hat === 'trilby') {
-      const brim = this.mesh(new THREE.CylinderGeometry(0.205, 0.205, 0.012, 20), felt, this.head, 0, 0.105, 0);
-      brim.scale.z = 1.1;
-      brim.rotation.x = -0.1;
-      const crown = this.mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.12, 14), felt, this.head, 0, 0.17, 0);
-      crown.rotation.x = -0.05;
-      this.mesh(new THREE.CylinderGeometry(0.133, 0.134, 0.03, 14), this.mat(0x14110e), this.head, 0, 0.13, 0).rotation.x = -0.05;
-      this.mesh(new THREE.BoxGeometry(0.1, 0.02, 0.025), felt, this.head, 0, 0.235, 0.0);
+      this.mesh(new THREE.CylinderGeometry(0.205, 0.205, 0.012, 24), felt, head, 0, 0.11, 0).rotation.x = -0.1;
+      this.mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.12, 16), felt, head, 0, 0.175, 0).rotation.x = -0.05;
     } else if (look.hat === 'flat') {
-      const crown = this.mesh(new THREE.SphereGeometry(0.16, 16, 8, 0, Math.PI * 2, 0, 1.35), felt, this.head, 0, 0.07, 0);
+      const crown = this.mesh(new THREE.SphereGeometry(0.16, 18, 8, 0, Math.PI * 2, 0, 1.35), felt, head, 0, 0.075, 0);
       crown.scale.set(1.05, 0.55, 1.18);
-      const peak = this.mesh(new THREE.BoxGeometry(0.17, 0.012, 0.1), felt, this.head, 0, 0.085, 0.16);
-      peak.rotation.x = 0.28;
+      this.mesh(new THREE.BoxGeometry(0.17, 0.012, 0.1), felt, head, 0, 0.09, 0.16).rotation.x = 0.28;
     } else if (look.hat === 'cloche') {
-      const bell = this.mesh(new THREE.SphereGeometry(0.16, 16, 10, 0, Math.PI * 2, 0, 1.22), felt, this.head, 0, 0.045, -0.01);
+      const bell = this.mesh(new THREE.SphereGeometry(0.16, 18, 10, 0, Math.PI * 2, 0, 1.22), felt, head, 0, 0.045, -0.01);
       bell.scale.set(sx * 1.08, 1.0, 1.04);
-      this.mesh(new THREE.CylinderGeometry(0.17, 0.19, 0.01, 18), felt, this.head, 0, 0.075, 0.0).scale.set(sx, 1, 1.05);
-      this.mesh(new THREE.SphereGeometry(0.018, 6, 5), this.mat(0xb8a06a), this.head, 0.12, 0.06, 0.06);
+      this.mesh(new THREE.CylinderGeometry(0.17, 0.19, 0.01, 20), felt, head, 0, 0.075, 0).scale.set(sx, 1, 1.05);
+    } else if (look.hat === 'nurse') {
+      this.mesh(new THREE.BoxGeometry(0.16, 0.06, 0.1), this.mat(0xf2f0ea), head, 0, 0.16, 0.02).rotation.x = -0.3;
+    }
+    if (look.glasses) {
+      const frame = this.mat(0x14110e);
+      for (const sd of [-1, 1]) this.mesh(new THREE.TorusGeometry(0.03, 0.0035, 5, 16), frame, head, sd * 0.042, 0.022, 0.142);
+      this.mesh(new THREE.BoxGeometry(0.02, 0.004, 0.004), frame, head, 0, 0.026, 0.148);
     }
   }
 
-  private buildProp(look: Look, p: Patient): void {
-    const g = this.propGroup;
+  private buildProp(look: Look): void {
+    const b = this.body!;
+    const hand = b.arms[1].hand; // right hand
+    const handL = b.arms[0].hand;
     switch (look.prop) {
       case 'umbrella': {
         const dark = this.mat(0x15130f);
-        const shaft = this.mesh(new THREE.CylinderGeometry(0.02, 0.026, 1.0, 8), dark, g, 0.28, 0.5, 0.26);
-        shaft.rotation.z = 0.03;
-        const wrap = this.mesh(new THREE.ConeGeometry(0.06, 0.55, 8), dark, g, 0.285, 0.45, 0.26);
-        wrap.rotation.x = Math.PI;
-        const hook = this.mesh(new THREE.TorusGeometry(0.05, 0.015, 6, 10, Math.PI * 1.2), this.mat(0x4a2a18), g, 0.25, 1.0, 0.26);
-        hook.rotation.z = Math.PI;
+        this.mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.9, 8), dark, hand, 0, -0.5, 0.02);
+        this.mesh(new THREE.ConeGeometry(0.05, 0.5, 10), dark, hand, 0, -0.62, 0.02).rotation.x = Math.PI;
         break;
       }
       case 'goose': {
         const china = this.mat(0xe8e4d6);
-        const blue = this.mat(0x35507a);
-        const body = this.mesh(new THREE.SphereGeometry(0.14, 14, 10), china, g, 0, 1.08, 0.36);
-        body.scale.set(0.85, 0.8, 1.2);
-        const neck = this.mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.22, 8), china, g, 0, 1.24, 0.43);
+        const g = new THREE.Group();
+        g.position.set(0, 1.2 * b.scaleY, 0.24);
+        b.root.add(g);
+        this.mesh(new THREE.SphereGeometry(0.13, 16, 12), china, g).scale.set(0.85, 0.8, 1.2);
+        const neck = this.mesh(new THREE.CylinderGeometry(0.033, 0.048, 0.22, 10), china, g, 0, 0.15, 0.07);
         neck.rotation.x = 0.35;
-        this.mesh(new THREE.SphereGeometry(0.052, 10, 8), china, g, 0, 1.36, 0.47);
-        const beak = this.mesh(new THREE.ConeGeometry(0.02, 0.07, 6), this.mat(0xd4802a), g, 0, 1.355, 0.53);
-        beak.rotation.x = Math.PI / 2;
-        this.mesh(new THREE.TorusGeometry(0.04, 0.008, 5, 12), blue, g, 0, 1.28, 0.45).rotation.x = Math.PI / 2 - 0.35;
-        for (const sd of [-1, 1]) this.mesh(new THREE.SphereGeometry(0.008, 5, 4), this.mat(0x111111), g, sd * 0.02, 1.37, 0.5);
-        // a hairline crack
-        this.mesh(new THREE.BoxGeometry(0.004, 0.09, 0.004), this.mat(0x6a6256), g, 0.05, 1.1, 0.49);
+        this.mesh(new THREE.SphereGeometry(0.05, 12, 10), china, g, 0, 0.27, 0.11);
+        this.mesh(new THREE.ConeGeometry(0.02, 0.07, 8), this.mat(0xd4802a), g, 0, 0.265, 0.17).rotation.x = Math.PI / 2;
+        this.mesh(new THREE.TorusGeometry(0.04, 0.008, 6, 14), this.mat(0x35507a), g, 0, 0.19, 0.09).rotation.x = Math.PI / 2 - 0.35;
         break;
       }
       case 'redcap': {
         const wool = this.mat(0xa02828);
-        const c = this.mesh(new THREE.SphereGeometry(0.075, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.9), wool, g, 0, 1.12, 0.38);
-        c.rotation.x = -0.4;
-        this.mesh(new THREE.TorusGeometry(0.072, 0.014, 6, 12), this.mat(0x7a1c1c), g, 0, 1.115, 0.375).rotation.x = Math.PI / 2 - 0.4;
-        this.mesh(new THREE.SphereGeometry(0.02, 6, 5), this.mat(0xd8d0c0), g, 0, 1.18, 0.35);
+        const c = this.mesh(new THREE.SphereGeometry(0.075, 12, 8, 0, Math.PI * 2, 0, Math.PI / 1.9), wool, hand, 0, -0.1, 0.06);
+        c.rotation.x = -0.6;
+        this.mesh(new THREE.SphereGeometry(0.02, 6, 5), this.mat(0xd8d0c0), hand, 0, -0.04, 0.06);
         break;
       }
-      case 'folder': {
-        this.mesh(new THREE.BoxGeometry(0.24, 0.015, 0.32), this.mat(0xcfc29c), g, 0.0, 1.12, 0.4).rotation.x = -0.35;
-        this.mesh(new THREE.BoxGeometry(0.2, 0.004, 0.26), this.mat(0xf0ece0), g, 0.0, 1.13, 0.4).rotation.x = -0.35;
+      case 'folder':
+        this.mesh(new THREE.BoxGeometry(0.24, 0.32, 0.015), this.mat(0xcfc29c), hand, 0, -0.12, 0.05);
+        break;
+      case 'slippers': {
+        const pink = this.mat(0xd99aa6);
+        for (const x of [-0.03, 0.03]) this.mesh(new THREE.SphereGeometry(1, 10, 6), pink, hand, x, -0.09, 0.04).scale.set(0.026, 0.02, 0.065);
         break;
       }
-      case 'bag':
-      case 'none':
+      case 'handbag': {
+        const leather = this.mat(0x2a1a14);
+        this.mesh(new THREE.BoxGeometry(0.22, 0.16, 0.08), leather, handL, 0, -0.16, 0);
+        this.mesh(new THREE.TorusGeometry(0.06, 0.008, 5, 12, Math.PI), leather, handL, 0, -0.08, 0);
+        break;
+      }
+      case 'bible':
+        this.mesh(new THREE.BoxGeometry(0.14, 0.2, 0.04), this.mat(0x1a0f0c), hand, 0, -0.1, 0.06);
+        this.mesh(new THREE.BoxGeometry(0.004, 0.06, 0.006), this.mat(0xb08a3e), hand, 0, -0.07, 0.083);
+        break;
+      case 'cigarette':
+        this.mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.07, 6), this.mat(0xf2efe6), hand, 0.02, -0.1, 0.03).rotation.z = 1.2;
+        this.mesh(new THREE.SphereGeometry(0.005, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff6a20 }), hand, 0.055, -0.087, 0.03);
+        break;
+      case 'lamp': {
+        const tin = this.mat(0x4a4a44);
+        this.mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.12, 10), tin, hand, 0, -0.15, 0.03);
+        this.mesh(new THREE.TorusGeometry(0.04, 0.005, 5, 12, Math.PI), tin, hand, 0, -0.08, 0.03);
+        break;
+      }
+      default:
         break;
     }
-    void p;
   }
 
   setStare(on: boolean): void {
     this.stare = on;
   }
 
+  /** The glass gives. 'crack': it is on the window. 'inside': it is in the booth with you. */
+  setBreach(phase: 'crack' | 'inside' | 'over'): void {
+    if (phase === 'over') {
+      this.breach = null;
+      this.group.visible = false;
+      return;
+    }
+    this.breach = phase;
+    if (phase === 'inside') {
+      this.group.position.set(0.95, 0, -0.1);
+      this.group.rotation.y = -Math.PI / 2 - 0.4;
+    }
+  }
+
   beginLeave(v: Verdict | 'timeout'): void {
     this.verdict = v;
     this.t = 0;
     this.from.copy(this.group.position);
+    const fake = this.patient?.truth === 'understudy';
+    this.lurk = fake && (v === 'refuse' || v === 'timeout') && !this.breach;
+    if (this.breach) {
+      this.group.visible = false;
+      return;
+    }
     if (v === 'admit' || v === 'observe') this.to.set(-3.2, 0, -3.2);
+    else if (this.lurk) this.to.set(-3.3, 0, -6.6); // it does not leave. It goes to the corner and watches.
     else if (v === 'refuse' || v === 'timeout') this.to.copy(this.spawn).setZ(-9.5);
     else this.to.copy(this.group.position);
   }
@@ -528,6 +392,16 @@ export class PatientView {
     this.shown = s;
   }
 
+  private pose(name: keyof typeof POSES | ArmPose, side: number, swing: number, fidget: number): void {
+    const b = this.body!;
+    const p = typeof name === 'string' ? POSES[name] : name;
+    const a = b.arms[side < 0 ? 0 : 1];
+    a.sh.rotation.x = p.sh + swing + fidget;
+    a.sh.rotation.z = side * p.out;
+    a.el.rotation.x = p.el - Math.abs(swing) * 0.3 - fidget * 0.5;
+    for (const f of a.fingers) f.rotation.x = p.el < -1 ? -0.9 : -0.25;
+  }
+
   update(dt: number, phase: ViewPhase, cam: THREE.Vector3, quiet: boolean): void {
     const p = this.patient;
     const look = this.look;
@@ -536,79 +410,124 @@ export class PatientView {
     this.rim.position.set(0.35, 1.95, -0.55);
     this.under.position.set(0, 0.95, 0.6);
     this.rim.intensity = on ? 2.2 : 0;
-    this.under.intensity = on ? (p!.truth === 'understudy' ? 1.6 : 0.9) : 0;
-    if (!p || !look || !this.group.visible) return;
+    this.under.intensity = on ? (p!.truth === 'understudy' ? 1.7 : 0.9) : 0;
+    if (!p || !look || !this.body || !this.group.visible) return;
     this.t += dt;
-    const understudy = p.truth === 'understudy';
+    const fake = p.truth === 'understudy';
     const g = this.group;
-    const arch = p.archetype;
-    const sway = understudy ? Math.sin(this.t * 0.9) * 0.006 : Math.sin(this.t * 0.9 + p.hue * 6) * 0.012 + Math.sin(this.t * 2.3) * 0.006;
+    const b = this.body;
+    let walking = 0;
+    let leanFwd = 0;
+
+    if (this.breach === 'inside') {
+      // in the booth, bent low, searching by sound. It turns its head toward every noise.
+      g.position.y = 0;
+      b.chest.rotation.x = 0.85;
+      this.head.rotation.y = Math.sin(this.t * 0.9) * 0.9;
+      this.head.rotation.z = Math.sin(this.t * 3.1) * 0.15;
+      this.pose({ sh: -1.1, el: -0.3, out: 0.2 }, -1, Math.sin(this.t * 1.3) * 0.2, 0);
+      this.pose({ sh: -1.1, el: -0.3, out: 0.2 }, 1, Math.cos(this.t * 1.1) * 0.2, 0);
+      this.setFace(Math.sin(this.t * 7) > 0.6 ? 'reveal' : 'stare');
+      return;
+    }
 
     if (phase === 'approaching') {
       const k = Math.min(1, this.t / 3.5);
       this.progress = k;
       g.position.lerpVectors(this.spawn, this.stand, k);
-      // humans bob as they walk. The Understudy glides a little too evenly.
-      g.position.y = understudy ? Math.abs(Math.sin(this.t * 5.2)) * 0.012 : Math.abs(Math.sin(this.t * 5.2)) * 0.035 * (1 - k * 0.6);
       g.rotation.y = 0;
+      walking = k < 1 ? 1 : 0;
     } else if (phase === 'present') {
       this.progress = 1;
+      // a fake leans in to the glass while it holds your eye, and stays on it while it breaks through
+      const want = this.breach === 'crack' ? 1 : fake && this.stare ? 0.85 : 0;
+      this.press += (want - this.press) * Math.min(1, dt * (want > this.press ? 1.6 : 3));
       g.position.copy(this.stand);
-      g.position.x += sway;
-      g.position.y = 0;
+      g.position.z += this.press * 0.92;
+      if (this.breach === 'crack') g.position.x += Math.sin(this.t * 40) * 0.006;
+      leanFwd = this.press * 0.18;
     } else if (phase === 'leaving') {
-      const k = Math.min(1, this.t / 2.6);
+      const k = Math.min(1, this.t / (this.lurk ? 3.2 : 2.6));
       if (this.verdict === 'contain') {
         g.position.copy(this.stand);
         g.position.y = -Math.pow(k, 2) * 2.4;
       } else {
         g.position.lerpVectors(this.from, this.to, k);
-        g.position.y = Math.abs(Math.sin(this.t * 5.2)) * 0.03;
-        g.rotation.y = this.to.x < -1 ? -1.2 : 0;
+        g.rotation.y = this.lurk ? (k < 1 ? Math.PI * 0.8 : 0.35) : this.to.x < -1 ? -1.2 : 0;
+        walking = k < 1 ? 1 : 0;
       }
-      if (k >= 1 && this.verdict !== null) g.visible = false;
+      if (k >= 1 && this.verdict !== null && !this.lurk) g.visible = false;
+    }
+    if (!this.breach && phase === 'present') g.position.y = 0;
+
+    // walking: hips, knees, opposite arms. The fake glides a touch too smoothly.
+    this.walkPh += dt * (walking ? 7.2 : 0);
+    const amp = walking * (fake ? 0.32 : 0.45);
+    for (const l of b.legs) {
+      const s = Math.sin(this.walkPh + (l.side > 0 ? Math.PI : 0));
+      l.hip.rotation.x = -s * amp;
+      l.knee.rotation.x = Math.max(0, Math.sin(this.walkPh + (l.side > 0 ? Math.PI : 0) - 1.2)) * amp * 1.5;
+    }
+    b.pelvis.position.y = 0.95 * b.scaleY + (walking ? Math.abs(Math.sin(this.walkPh)) * (fake ? 0.008 : 0.025) : 0);
+    b.chest.rotation.x = look.hunch * 0.35 + leanFwd + (fake && !walking ? -0.02 : 0);
+    if (b.skirt) b.skirt.rotation.x = walking ? Math.sin(this.walkPh * 2) * 0.03 : 0;
+
+    // breathing and weight shifts. The fake does neither.
+    const breathe = fake ? 0 : Math.sin(this.t * 1.6 + p.hue * 4) * 0.012;
+    b.chest.scale.set(1 + breathe, 1 + breathe * 0.6, 1 + breathe * 1.3);
+    b.root.rotation.z = fake ? 0 : Math.sin(this.t * 0.45 + p.hue * 3) * 0.012;
+    if (!fake && p.archetype === 'strange_innocent') b.root.rotation.z = Math.sin(this.t * 1.7) * 0.035;
+    if (!fake && p.castId === 'gus') b.root.position.x = Math.sin(this.t * 31) * 0.003; // shaking
+
+    // arms
+    const pressing = this.press > 0.4;
+    for (const side of [-1, 1]) {
+      const swing = walking ? Math.sin(this.walkPh + (side > 0 ? 0 : Math.PI)) * 0.35 : 0;
+      let fidget = 0;
+      if (!fake && !walking) {
+        if (p.archetype === 'tragic') fidget = Math.sin(this.t * 2.2 + side) * 0.06;
+        else if (this.speaking > 0) fidget = Math.sin(this.t * 6 + side * 2) * 0.08;
+        else fidget = Math.sin(this.t * 0.8 + side) * 0.015;
+      }
+      const base = pressing ? 'glass' : walking && (look.pose === 'folded' || look.pose === 'hold') ? look.pose : walking ? 'rest' : look.pose === 'bag' && side > 0 ? 'rest' : look.pose;
+      this.pose(base as keyof typeof POSES, side, pressing ? Math.sin(this.t * 2 + side) * 0.03 : swing, fidget);
     }
 
-    // head: humans look at you with a lag; the Understudy looks at you a little too early and too still
+    // head: people look at you a beat late; a fake looks at you a beat early and too still
     const dx = cam.x - g.position.x;
     const dz = cam.z - g.position.z;
     const yaw = Math.atan2(dx, dz) - g.rotation.y;
-    const lag = understudy ? 14 : 4;
     const head = this.head;
-    head.rotation.y += (THREE.MathUtils.clamp(yaw, -1, 1) - head.rotation.y) * Math.min(1, dt * lag);
-    const tilt = understudy ? 0.06 + Math.min(this.stage, 7) * 0.012 : Math.sin(this.t * 0.7 + p.hue * 5) * 0.03;
-    head.rotation.z = this.stare ? 0.16 : tilt + Math.sin(this.t * 0.3) * (understudy ? 0.004 : 0.01);
-    head.rotation.x = this.speaking > 0 ? Math.sin(this.t * 11) * 0.04 : arch === 'tragic' ? 0.12 : 0;
+    head.rotation.y += (THREE.MathUtils.clamp(yaw, -1, 1) - head.rotation.y) * Math.min(1, dt * (fake ? 14 : 4));
+    const tilt = fake ? 0.06 + Math.min(this.stage, 7) * 0.015 : Math.sin(this.t * 0.7 + p.hue * 5) * 0.03;
+    head.rotation.z = this.stare ? (fake ? 0.32 : 0.12) : tilt;
+    head.rotation.x = this.speaking > 0 ? Math.sin(this.t * 11) * 0.04 : p.archetype === 'tragic' ? 0.14 : this.lurk ? 0.1 : 0;
     this.speaking = Math.max(0, this.speaking - dt);
 
-    // faces: blink, talk, stare
+    // faces: blink, talk, stare, and the one underneath
     let face: FaceState = 'open';
-    // the Understudy slips. A frame or two of the other face, then it is back.
-    if (understudy && phase === 'present' && this.stage >= 2) {
+    if (fake && phase === 'present' && this.stage >= 2) {
       this.glimpseIn -= dt;
       if (this.glimpseIn <= 0) {
         this.revealT = 0.07 + Math.random() * 0.06;
-        this.onGlimpse?.();
         this.glimpseIn = 10 + Math.random() * 16 - this.stage;
+        this.onGlimpse?.();
       }
     }
     this.revealT = Math.max(this.revealT - dt, this.revealing);
     this.revealing = Math.max(0, this.revealing - dt);
-    const showing = understudy && this.revealT > 0;
-    head.scale.set(showing ? 0.93 : 1, showing ? 1.2 : 1, 1);
-    if (showing) {
-      head.rotation.z += (Math.random() - 0.5) * 0.25;
-      head.position.x = (Math.random() - 0.5) * 0.02;
-    } else head.position.x = 0;
+    const showing = fake && (this.revealT > 0 || this.breach === 'crack');
+    head.scale.set(HEAD_SCALE * (showing ? 0.93 : 1), HEAD_SCALE * (showing ? 1.2 : 1), HEAD_SCALE);
+    if (showing) head.rotation.z += (Math.random() - 0.5) * 0.25;
     if (showing) face = 'reveal';
-    else if (this.stare) face = 'stare';
+    else if (this.stare || this.lurk) face = 'stare';
     else if (this.speaking > 0 && Math.sin(this.t * 17) > -0.2) face = 'talk';
     else {
       this.blinkIn -= dt;
-      const never = understudy && this.stage >= 2;
+      const never = fake && this.stage >= 2;
       if (!never && this.blinkIn <= 0) {
-        this.blinkT = understudy ? 0.38 : 0.12;
-        this.blinkIn = understudy ? 7 + Math.random() * 4 : 1.8 + Math.random() * 3.6;
+        this.blinkT = fake ? 0.38 : 0.12;
+        this.blinkIn = fake ? 7 + Math.random() * 4 : 1.8 + Math.random() * 3.6;
       }
       if (this.blinkT > 0) {
         this.blinkT -= dt;
@@ -617,41 +536,8 @@ export class PatientView {
     }
     this.setFace(face);
 
-    // body language per archetype. The Understudy does very little of it.
-    const torso = this.torso;
-    const breathe = understudy ? 0 : Math.sin(this.t * 1.6 + p.hue * 4) * 0.006;
-    torso.scale.set(1 + breathe, 1 + breathe * 1.4, 1 + breathe);
-    this.root.rotation.z = 0;
-    this.root.rotation.x = 0;
-    if (!understudy) {
-      if (arch === 'strange_innocent') {
-        this.root.rotation.z = Math.sin(this.t * 1.7) * 0.035; // rocking, humming
-        torso.position.x = Math.sin(this.t * 30) * 0.0025; // shivers
-      } else if (arch === 'chatty') {
-        this.root.rotation.z = Math.sin(this.t * 0.6) * 0.02;
-      } else if (arch === 'tragic') {
-        this.root.rotation.x = 0.04;
-      } else if (arch === 'plain') {
-        this.root.rotation.z = Math.sin(this.t * 0.45) * 0.015; // shifts weight
-      }
-    } else {
-      this.root.rotation.x = -0.015; // stands a degree too straight
-    }
-    const pose = POSES[look.pose];
-    for (const a of this.arms) {
-      let fidget = 0;
-      if (!understudy) {
-        if (arch === 'tragic') fidget = Math.sin(this.t * 2.2 + a.side) * 0.08; // worrying the cap
-        else if (arch === 'chatty' && this.speaking > 0) fidget = Math.sin(this.t * 7 + a.side * 2) * 0.12;
-        else fidget = Math.sin(this.t * 0.8 + a.side) * 0.02;
-      }
-      a.sh.rotation.x = -pose.a + fidget;
-      a.el.rotation.x = -pose.b - fidget * 0.6;
-    }
-    this.propGroup.position.y = !understudy && arch === 'chatty' ? Math.sin(this.t * 1.6) * 0.004 : 0;
-
-    // breath fog in the cold hall. The Understudy sometimes forgets.
-    const breath = !p.tells.includes('no_breath') && !quiet;
+    // breath on the cold air. Fakes do not breathe.
+    const breath = !p.tells.includes('no_breath') && !quiet && !fake;
     this.puffs.forEach((s, i) => {
       const ph = ((this.t + i * 1.15) % 3.45) / 3.45;
       const mat = s.material as THREE.SpriteMaterial;
@@ -659,7 +545,7 @@ export class PatientView {
         mat.opacity = 0;
         return;
       }
-      s.position.set(0, 1.52 + ph * 0.08, 0.18 + ph * 0.28);
+      s.position.set(0, this.mouthY + ph * 0.08, 0.16 + ph * 0.28);
       s.scale.setScalar(0.04 + ph * 0.17);
       mat.opacity = (1 - ph / 0.7) * 0.55 * Math.min(1, ph * 8);
     });

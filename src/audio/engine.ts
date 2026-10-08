@@ -613,7 +613,7 @@ export class AudioEngine {
    * A person speaking. kind 'staff' and 'call' come through the phone or the intercom.
    * 'mimic' is pitched down, slowed and has a low drone and a whisper riding under it.
    */
-  voice(text: string, o: { pitch: number; radio: boolean; female: boolean; mimic?: number }): number {
+  voice(text: string, o: { pitch: number; radio: boolean; female: boolean; mimic?: number; rate?: number }): number {
     const mimic = o.mimic ?? 0;
     const voice = this.useTts && !this.muted ? this.pickVoice(o.female) : null;
     if (!voice) return this.speak(text, o.pitch, o.radio, mimic > 0.6);
@@ -621,7 +621,7 @@ export class AudioEngine {
     u.voice = voice;
     const base = o.female ? 1.05 : 0.85;
     u.pitch = Math.max(0, Math.min(2, mimic > 0 ? base - 0.35 - mimic * 0.45 : base + (o.pitch - 150) / 400));
-    u.rate = mimic > 0 ? 0.86 - mimic * 0.08 : o.radio ? 1.02 : 0.95;
+    u.rate = mimic > 0 ? 0.86 - mimic * 0.08 : o.rate ?? (o.radio ? 1.02 : 0.95);
     u.volume = 0.95;
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
@@ -701,6 +701,69 @@ export class AudioEngine {
     bp.connect(g).connect(this.voiceBus);
     this.noiseHit(1500, 2.2, 0.08, 0.02, null, 'bandpass');
     this.duck = Math.max(this.duck, 4);
+  }
+
+  // ---------------------------------------------------------------- the tall one, the glass, the end
+  /** Its footfall: bare, heavy, a wet slap with a long tail in the corridor. */
+  creatureStep(pos: V3): void {
+    if (!this.ctx) return;
+    this.noiseHit(260, 0.25, 0.32, 0.005, pos);
+    this.tone(48, 0.3, 0.25, 'sine', pos, 30);
+  }
+
+  /** It stops and listens: a low clicking rattle in the throat. */
+  growl(pos: V3): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    for (let i = 0; i < 14; i++) this.noiseHit(500 + Math.random() * 400, 0.05, 0.16, 0.003, pos, 'bandpass');
+    this.tone(70, 1.4, 0.18, 'sawtooth', pos, 52);
+  }
+
+  /** It heard you. Not a scream from a speaker: a breath pulled in, then a tearing note that bends down. */
+  shriek(pos: V3): void {
+    if (!this.ctx) return;
+    this.noiseHit(1800, 0.5, 0.12, 0.3, pos, 'bandpass');
+    this.tone(880, 1.1, 0.16, 'sawtooth', pos, 220, 0.35);
+    this.tone(1320, 0.9, 0.08, 'square', pos, 300, 0.38);
+    this.duck = Math.max(this.duck, 2);
+  }
+
+  doorBang(pos: V3): void {
+    if (!this.ctx) return;
+    this.thump(58, 0.6, 0, pos);
+    this.noiseHit(900, 0.18, 0.35, 0.002, pos);
+    this.noiseHit(3000, 0.4, 0.06, 0.01, pos, 'highpass'); // hinges and dust
+  }
+
+  /** Palms and forehead on the window. Each hit a little harder. */
+  glassHit(level: number): void {
+    if (!this.ctx) return;
+    const pos = { x: 0, y: 1.5, z: -1.3 };
+    this.thump(80 + level * 20, 0.35 + level * 0.15, 0, pos);
+    this.noiseHit(4200, 0.08 + level * 0.06, 0.1 + level * 0.12, 0.001, pos, 'highpass');
+  }
+
+  glassShatter(): void {
+    if (!this.ctx) return;
+    for (let i = 0; i < 18; i++) setTimeout(() => this.noiseHit(3000 + Math.random() * 5000, 0.15 + Math.random() * 0.3, 0.2, 0.001, { x: (Math.random() - 0.5) * 2, y: 0.5, z: -1 }, 'highpass'), i * 25 + Math.random() * 40);
+    this.thump(60, 0.8, 0);
+    this.duck = Math.max(this.duck, 3);
+  }
+
+  /** The end: everything cuts, then one loud ugly chord and a rush of noise. Loud, but not ear-splitting. */
+  deathSting(): void {
+    if (!this.ctx) return;
+    this.noiseHit(1200, 1.4, 0.45, 0.01, null, 'lowpass');
+    for (const f of [92, 97.5, 138, 196]) this.tone(f, 1.6, 0.18, 'sawtooth', null, f * 0.6);
+    this.duck = 6;
+  }
+
+  /** Something appears: a soft low swell, the room tone drops out under it. */
+  presence(): void {
+    if (!this.ctx) return;
+    this.tone(41, 4, 0.2, 'sine', null, 38);
+    this.tone(61.7, 4, 0.08, 'triangle', null, 58);
+    this.duck = Math.max(this.duck, 3);
   }
 
   scrub(): void {
