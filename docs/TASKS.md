@@ -1,7 +1,12 @@
 # MIDNIGHT: task log, round 4
 
-Live build: https://naman-singh-777.github.io/MIDNIGHT/ (GitHub Pages, deployed by `.github/workflows/pages.yml` on every push to `main`).
-Repo: https://github.com/Naman-Singh-777/MIDNIGHT (renamed from MIDNIGHT-COMPUTER; GitHub redirects the old URL).
+Live build (after the two clicks below): https://naman-singh-777.github.io/MIDNIGHT/
+Repo: https://github.com/Naman-Singh-777/MIDNIGHT-COMPUTER (to be renamed MIDNIGHT).
+
+Two settings only the owner can change (the cloud session is not allowed to edit repository settings):
+1. Settings, General, Repository name: `MIDNIGHT`, then Rename. GitHub redirects the old URL, so existing clones keep working.
+2. Settings, Pages, Build and deployment, Source: GitHub Actions. Then Actions, "Deploy MIDNIGHT to GitHub Pages", Run workflow (or push any commit).
+Until step 1 the site address is https://naman-singh-777.github.io/MIDNIGHT-COMPUTER/.
 
 This file records what round 4 did, how each part was checked, and what is still open, in priority order. Read it before `docs/HANDOFF_FOR_OPUS.md`.
 
@@ -78,7 +83,7 @@ One tube is dead, the others stutter, and the ones near the tall one cut out as 
 
 ### 2.7 Hosting
 
-`.github/workflows/pages.yml` runs tests, builds and deploys `dist` to Pages. `index.html` title is MIDNIGHT. The repo was renamed to MIDNIGHT so the site lives at `/MIDNIGHT/`.
+`.github/workflows/pages.yml` runs tests, builds and deploys `dist` to Pages on every push to `main`. `index.html` title is MIDNIGHT, and asset paths are relative, so the build works under any repo name. Renaming the repo and switching Pages on are the two owner steps at the top of this file.
 
 ## 3. How it was checked
 
@@ -101,7 +106,7 @@ What the research changed this round: sound-based hunting with a suspicion meter
 ## 5. What is left, in priority order
 
 1. **Play a full night on the laptop.** Listen to every sound, time the breach patience, walk past the tall one during the blackout, and do the dawn walk. Write down anything flat or unfair.
-2. **Check the Pages deploy.** Actions tab on GitHub. If the first run fails, the usual cause is Pages not being enabled for "GitHub Actions" in Settings, Pages.
+2. **Turn Pages on and rename the repo** (top of this file). The first workflow run will fail at the deploy step until Pages is set to GitHub Actions; re-run it after.
 3. **Dawn walk as a set piece.** Right now the tall one is simply summoned at 05:47. Script it: lights out on the corridor, Pell's voice at the far end, the ward door open, the creature between you and it.
 4. **Hiding spots.** The corridor alcove at x 11 is fake (wall in front). A real hiding cupboard needs map approval.
 5. **Character polish.** Shoulders are still a little square, hands are paddle-like at close range, hair is caps rather than strands, and nobody has knees showing through coats. Next steps: smooth shoulder deltoids into the torso, finger joints, a hair card texture, and per-character idle animations (Walter shifting the slippers, Gus checking the door).
