@@ -1,5 +1,9 @@
 # Asylum Intake: The Midnight Shift
 
+**Play it in your browser: [naman-singh-777.github.io/MIDNIGHT777](https://naman-singh-777.github.io/MIDNIGHT777/)**
+
+Best on a desktop browser with headphones. Click Begin, then click the game to lock the mouse.
+
 You work the night intake window at Vesper Hollow Sanatorium, October 1963. Check each admission slip against the ledger, ask five questions, then decide. Something in the queue is borrowing faces.
 
 ## Run it
