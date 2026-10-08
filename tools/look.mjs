@@ -35,6 +35,20 @@ for (const id of (process.argv[3] ?? 'walter,dolly,bernard,penhale,rosa,gus').sp
     g.player.update = () => {};
   }, id);
 }
+// close-ups and angles for clipping checks
+for (const [id, ang, dist, y, name] of [['walter', 0, 0.5, 1.52, 'face-walter'], ['dolly', 0.5, 0.55, 1.5, 'face-dolly'], ['gus', 0, 0.5, 1.6, 'face-gus'], ['rosa', 1.57, 2.2, 0.95, 'side-rosa'], ['marsh', 2.6, 2.2, 0.95, 'back-marsh'], ['bernard', 0.8, 2.0, 0.95, 'q-bernard']]) {
+  await shot(name, ([id, ang, dist, y]) => {
+    const g = window.__game;
+    const p = { id: 'T', archetype: 'plain', truth: 'human', registryId: 'C_' + id, castId: id, displayName: id, docs: {}, faceMark: 'a scar over the left brow', answers: {}, tells: [], quirk: '', hue: 0.3, height: 1, sprite: 0 };
+    g.view.setPatient(p, 0);
+    g.sim.state.phase = 'present';
+    g.view.group.position.set(0, 0, -4.6);
+    const c = g.player.camera;
+    c.position.set(Math.sin(ang) * dist, y, -2.45 + Math.cos(ang) * dist);
+    c.fov = 50; c.updateProjectionMatrix();
+    c.lookAt(0, y > 1.2 ? y - 0.02 : 0.95, -2.45);
+  }, [id, ang, dist, y]);
+}
 await shot('desk', () => {
   const g = window.__game;
   g.view.setPatient(null);

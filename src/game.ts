@@ -176,6 +176,16 @@ export class Game {
     };
     this.buildTaskProps();
     this.env.scene.add(this.creature.group);
+    // the mop, held low in front of you while you carry it
+    this.mopMesh = new THREE.Group();
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 1.2, 8), new THREE.MeshLambertMaterial({ color: 0x6b4a2a }));
+    handle.rotation.x = 1.0;
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, 0.18, 10), new THREE.MeshLambertMaterial({ color: 0x8a7a72 }));
+    head.position.set(0, -0.3, -0.48);
+    this.mopMesh.add(handle, head);
+    this.mopMesh.position.set(0.32, -0.35, -0.5);
+    this.mopMesh.visible = false;
+    this.player.camera.add(this.mopMesh);
     this.crack = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.25), new THREE.MeshBasicMaterial({ map: crackTexture(), transparent: true, opacity: 0, depthWrite: false }));
     this.crack.position.set(0, 1.575, -1.205);
     this.env.scene.add(this.crack);
@@ -271,7 +281,15 @@ export class Game {
       this.drawSlip(null);
       this.drawCrt();
     });
-    b.on('verdictResult', ({ verdict }) => {
+    b.on('verdictResult', ({ verdict, patient }) => {
+      const c = patient.castId ? CAST_BY_ID[patient.castId] : null;
+      if (verdict === 'admit' && c?.bye && patient.truth === 'human')
+        this.pendingTimers.push(
+          window.setTimeout(() => {
+            const dur = this.say(patient, c.bye!);
+            this.hud.subtitle(patient.displayName, c.bye!, Math.max(3500, dur * 1000 + 500));
+          }, 700),
+        );
       if (verdict === 'admit') this.audio.stamp();
       else if (verdict === 'contain') {
         this.leverT = 1.4;
@@ -299,12 +317,8 @@ export class Game {
         const dur = this.audio.voice(text, { pitch: v.pitch, radio: v.radio, female: FEMALE_STAFF.has(who), mimic: wrong ? 0.55 : 0 });
         this.hud.subtitle(who, text, Math.max(4500, dur * 1000 + 800));
       };
-      if (call) {
-        this.audio.phoneRing();
-        this.flickerPhone = 3;
-        this.hud.subtitle('Desk phone', 'It is ringing.', 2600);
-        this.pendingTimers.push(window.setTimeout(speak, 3800));
-      } else speak();
+      if (call) this.ring(speak);
+      else speak();
     });
     b.on('stalker', ({ event }) => {
       const st = this.sim.stalker;
@@ -343,6 +357,17 @@ export class Game {
       }
     });
     b.on('death', ({ cause }) => this.die(cause));
+    b.on('fear', ({ event, real }) => this.onFear(event, real));
+    b.on('dawn', ({ phase }) => {
+      if (phase === 'start') {
+        this.dawnT = 0.001;
+        this.audio.presence();
+      }
+    });
+    b.on('choice', () => {
+      this.choiceT = 16;
+      this.pendingTimers.push(window.setTimeout(() => this.hud.subtitle('Decide', 'Ring Pell and report the count? Press 1 to report it: he will lock Ward B from the inside. Press 2 to say nothing.', 15000), 5600));
+    });
     b.on('todo', ({ items }) => {
       this.hud.setTodo(items);
       this.refreshTaskLine(items);
@@ -574,6 +599,8 @@ export class Game {
       if (this.player.mode === 'floor') {
         if (document.pointerLockElement !== this.canvas) this.canvas.requestPointerLock?.();
       } else if (this.hovered?.id === 'lever') this.doVerdict('contain');
+      else if (this.hovered?.id === 'phone') this.answer();
+      else if (this.hovered?.id === 'photo') this.usePhoto();
     });
     document.addEventListener('pointerlockchange', () => {
       if (this.player.mode === 'floor' && this.running && !this.mini && document.pointerLockElement !== this.canvas) this.pause();
@@ -582,6 +609,16 @@ export class Game {
 
   private onKey(code: string): void {
     const desk = this.player.mode === 'desk';
+    if (code === 'Space' && this.call) {
+      this.answer();
+      return;
+    }
+    if (this.choiceT > 0 && !desk && (code === 'Digit1' || code === 'Digit2')) {
+      this.choiceT = 0;
+      this.sim.reportCount(code === 'Digit1');
+      if (code === 'Digit2') this.hud.subtitle('', 'You say nothing. Pell keeps counting.', 3000);
+      return;
+    }
     if (desk) {
       const qs: Record<string, QuestionId> = { Digit1: 'name', Digit2: 'dob', Digit3: 'sender', Digit4: 'kin', Digit5: 'memory' };
       if (qs[code]) this.ask(qs[code]);
@@ -617,7 +654,20 @@ export class Game {
       if (d.open) this.physics.removeCollider(d.collider);
       else d.collider = this.physics.addStaticBox(1.8, 1.05, 0.85, 0.04, 1.05, 0.45);
       this.audio.creak({ x: 1.8, y: 1, z: 0.9 });
+    } else if (h.id === 'prop' && h.prompt === 'Bucket') {
+      if (!this.hasMop) {
+        this.hasMop = true;
+        this.mopMesh.visible = true;
+        this.audio.scrub();
+        this.hud.subtitle('', 'You take the mop out of the bucket. The water is pink.', 3000);
+      }
+    } else if (h.id === 'phone') {
+      this.answer();
+    } else if (h.id === 'photo') {
+      this.usePhoto();
     } else if (h.id === 'chair') {
+      this.mopMesh.visible = false;
+      this.hasMop = this.sim.todoItem('mop')?.done ? false : this.hasMop;
       this.player.sit();
       document.exitPointerLock?.();
       this.hud.setMode(true);
@@ -723,7 +773,7 @@ export class Game {
 
   private refreshTaskLine(items: TodoItem[]): void {
     const open = items.filter((t) => t.shown && !t.done && !t.missed);
-    if (this.sim.state.powerOn || !this.sim.state.breakerTripped) this.hud.setTask(open.length ? `To do: ${open.map((t) => t.text.split('.')[0].toLowerCase()).join('; ')}.` : '');
+    if (this.sim.state.powerOn || !this.sim.state.breakerTripped) this.hud.setTask(open.length ? `To do: ${open.map((t) => { const parts = t.text.split('. '); return (parts[0].length < 16 ? parts.slice(0, 2).join('. ') : parts[0]).replace(/\.$/, '').toLowerCase(); }).join('; ')}.` : '');
   }
 
   /** The stain, the Ward B sign and slot, and the cabinet's hit box. Props only, at the task spots. */
@@ -816,7 +866,7 @@ export class Game {
     for (const h of hits) {
       const it = h.object.userData.interact as Interact | undefined;
       if (it && h.distance <= it.range) {
-        if (this.player.mode === 'desk' && it.id !== 'lever') continue;
+        if (this.player.mode === 'desk' && it.id !== 'lever' && it.id !== 'phone' && it.id !== 'photo') continue;
         return it;
       }
     }
@@ -883,6 +933,7 @@ export class Game {
       if (this.player.stepDelta > 0) this.audio.walk(this.player.stepDelta, this.player.sprinting, this.player.ducked);
     }
 
+    this.tickFearFx(dt);
     this.hovered = this.running ? this.pickInteract() : null;
     this.updatePrompt(dt);
 
@@ -894,6 +945,199 @@ export class Game {
     if (this.perfOn) this.perfTick(dt);
   }
   private lastMs = 0;
+
+  // ------------------------------------------------------------------ the phone, the photo, the fear events
+  private call: { speak: () => void; rings: number; t: number } | null = null;
+  private hasMop = false;
+  private mopMesh!: THREE.Group;
+  private lampOutT = 0;
+  private dawnT = 0;
+  private choiceT = 0;
+  private echo: { t: number; stepT: number; still: number; real: boolean; done: boolean } | null = null;
+  private figureFarT = 0;
+  private crtOverrideT = 0;
+
+  /** The phone rings until you pick it up, or it gives up. A call you miss is gone. */
+  private ring(speak: () => void): void {
+    if (this.call) {
+      this.call.speak = speak;
+      return;
+    }
+    this.call = { speak, rings: 0, t: 0 };
+    this.audio.phoneRing();
+    this.flickerPhone = 2.5;
+    this.hud.subtitle('Desk phone', 'The phone is ringing. Click it or press Space at the desk to answer.', 3000);
+  }
+
+  private answer(): void {
+    if (!this.call) return;
+    const inBooth = this.player.feet.x < 1.85;
+    if (!inBooth) return;
+    const c = this.call;
+    this.call = null;
+    this.audio.click();
+    c.speak();
+  }
+
+  private usePhoto(): void {
+    const ph = this.env.desk.photo;
+    const down = Math.abs(ph.rotation.x) > 1;
+    ph.rotation.set(-0.15, 0.25, 0);
+    this.audio.paper();
+    this.hud.subtitle(
+      'The photograph',
+      down ? 'Somebody laid it face down. Mum and me, Margate, 1949. You were six. She still knew your name then.' : 'Mum and me, Margate, 1949. You were six. She still knew your name then.',
+      5000,
+    );
+  }
+
+  private onFear(e: import('./sim/fear').FearEvent, real: boolean): void {
+    const cam = this.player.camera.position;
+    const st = this.sim.stalker;
+    switch (e) {
+      case 'rat':
+        this.audio.scratch({ x: cam.x + 1.2, y: 0.1, z: 1.6 });
+        this.pendingTimers.push(window.setTimeout(() => this.audio.tone2(2600, 0.08), 600));
+        break;
+      case 'pipe_burst':
+        this.audio.pipeKnock({ x: cam.x + 2, y: 2.7, z: 0.3 });
+        this.audio.hiss({ x: cam.x + 2, y: 2.7, z: 0.3 });
+        break;
+      case 'pell_false_alarm':
+        for (let i = 0; i < 7; i++) this.pendingTimers.push(window.setTimeout(() => this.audio.distantStep({ x: 13.5 - i * 0.6, y: 0, z: 0.9 }), i * 520));
+        this.pendingTimers.push(
+          window.setTimeout(() => {
+            const text = 'Only me! Only me. Sorry. I was checking the fuse box. Sorry. Going back now.';
+            const dur = this.audio.voice(text, { pitch: 118, radio: true, female: false });
+            this.hud.subtitle('Orderly Pell', text, Math.max(3500, dur * 1000 + 400));
+          }, 4200),
+        );
+        break;
+      case 'echo_steps':
+        this.echo = { t: 0, stepT: 0.4, still: 0, real, done: false };
+        break;
+      case 'run_far':
+        for (let i = 0; i < 9; i++) this.pendingTimers.push(window.setTimeout(() => this.audio.distantStep({ x: 13.6, y: 0, z: 0.9 }), i * 170));
+        break;
+      case 'figure_far':
+        if (!st.active) {
+          this.figureFarT = 1.6;
+          this.flickerT = Math.max(this.flickerT, 1.6);
+          this.audio.presence();
+        }
+        break;
+      case 'breath_wall':
+        this.audio.breathBehind();
+        break;
+      case 'mug_moved': {
+        const m = this.env.desk.mug;
+        m.position.x += 0.22;
+        m.rotation.y += 1.2;
+        break;
+      }
+      case 'terminal_line':
+        this.crtOverrideT = 5;
+        this.drawCrtLine('WREN, ______   LET IN 22:00   WARD B BED 10');
+        this.audio.ding();
+        break;
+      case 'photo_down':
+        this.env.desk.photo.rotation.set(-Math.PI / 2 + 0.02, 0.25, 0);
+        break;
+      case 'dead_line_call':
+        this.ring(() => {
+          this.audio.breathBehind();
+          const text = 'Night intake.';
+          this.pendingTimers.push(
+            window.setTimeout(() => {
+              this.audio.voice(text, { pitch: 150, radio: true, female: false, mimic: 0.6 });
+              this.hud.subtitle('Your own voice', text, 2600);
+            }, 2200),
+          );
+          this.pendingTimers.push(
+            window.setTimeout(() => {
+              const t2 = "Pell. Did your phone just ring? The lines on this floor have been dead since the storm. Who were you talking to?";
+              const dur = this.audio.voice(t2, { pitch: 118, radio: true, female: false });
+              this.hud.subtitle('Orderly Pell', t2, Math.max(4000, dur * 1000));
+            }, 9000),
+          );
+        });
+        break;
+      case 'lamp_out':
+        this.lampOutT = 4;
+        this.audio.powerDown();
+        break;
+      case 'door_knock':
+        this.audio.knock({ x: 1.85, y: 1.3, z: 0.85 }, 3);
+        break;
+    }
+  }
+
+  private drawCrtLine(line: string): void {
+    const s = this.env.crt;
+    const g = s.ctx;
+    g.fillStyle = '#031008';
+    g.fillRect(0, 0, 512, 384);
+    g.fillStyle = '#62ff9a';
+    g.font = '26px VT323, "Courier New", monospace';
+    g.fillText('RECORD OPENED: 1 OF 1', 24, 60);
+    g.fillText(line, 24, 120);
+    s.touch();
+  }
+
+  /** Runs the presentation side of the fear events, the ringing phone and the report choice. */
+  private tickFearFx(dt: number): void {
+    if (!this.running) return;
+    if (this.dawnT > 0) this.dawnT += dt;
+    this.choiceT = Math.max(0, this.choiceT - dt);
+    if (this.crtOverrideT > 0) {
+      this.crtOverrideT -= dt;
+      if (this.crtOverrideT <= 0) this.drawCrt();
+    }
+    if (this.call) {
+      this.call.t += dt;
+      if (this.call.t > 2.8) {
+        this.call.t = 0;
+        this.call.rings++;
+        if (this.call.rings >= 4) {
+          this.call = null;
+          this.hud.subtitle('Desk phone', 'It stops ringing. Whatever they wanted to tell you, you missed it.', 3500);
+        } else {
+          this.audio.phoneRing();
+          this.flickerPhone = 2.5;
+        }
+      }
+    }
+    // steps behind you that keep time with yours, and take one more step after you stop
+    const e = this.echo;
+    if (e && !e.done) {
+      e.t += dt;
+      const moving = this.player.stepDelta > 0.0005;
+      const cam = this.player.camera.position;
+      const behind = { x: cam.x - this.player.forward().x * 3, y: 0, z: cam.z - this.player.forward().z * 3 };
+      if (moving) {
+        e.still = 0;
+        e.stepT -= dt;
+        if (e.stepT <= 0) {
+          e.stepT = 0.55;
+          this.audio.distantStep(behind);
+        }
+      } else {
+        e.still += dt;
+        if (e.still > 0.6) {
+          this.audio.distantStep(behind); // one more, after you stopped
+          e.done = true;
+        }
+      }
+      if (e.t > 9 && !e.done) {
+        e.done = true;
+      }
+    }
+    if (this.figureFarT > 0) {
+      this.figureFarT -= dt;
+      const on = this.figureFarT > 0 && Math.sin(this.time * 40) > -0.6;
+      this.creature.update(dt, on, 13.6, 0.95, 'listen', this.player.camera.position);
+    }
+  }
 
   /** Tells the sim where you are and how loud you are being, and moves the tall one. */
   private feedStalker(dt: number): void {
@@ -910,7 +1154,7 @@ export class Game {
       torchOnIt = d < 7 && to.normalize().dot(pl.forward()) > 0.93;
     }
     this.sim.setPlayer({ x: f.x, z: f.z, noise, noiseRange: range, torchOnIt, inBooth: f.x < 1.85, doorClosed: !this.env.boothDoor.open });
-    this.creature.update(dt, st.active, st.x, st.z, st.mode, pl.camera.position);
+    if (this.figureFarT <= 0) this.creature.update(dt, st.active, st.x, st.z, st.mode, pl.camera.position);
     if (st.active && st.mode !== 'door') {
       this.stepT -= dt * (st.mode === 'hunt' ? 2.6 : 1);
       if (this.stepT <= 0) {
@@ -975,7 +1219,7 @@ export class Game {
   /** Mopping: hold E on the stain and scrub with the mouse. The view stays put while you scrub. */
   private mopTick(dt: number): void {
     const t = this.sim.todoItem('mop');
-    if (!t || t.done || this.hovered?.id !== 'stain' || !this.input.keys.has('KeyE') || this.player.mode !== 'floor') return;
+    if (!t || t.done || !this.hasMop || this.hovered?.id !== 'stain' || !this.input.keys.has('KeyE') || this.player.mode !== 'floor') return;
     const motion = Math.abs(this.input.mouseDX) + Math.abs(this.input.mouseDY);
     this.input.mouseDX = 0;
     this.input.mouseDY = 0;
@@ -995,7 +1239,7 @@ export class Game {
     }
     if (this.mopProgress >= 1) {
       this.sim.completeTask('mop');
-      this.hud.subtitle('Your own handwriting', 'Not rust. Rust does not have fingers.', 3600);
+      this.hud.subtitle('Your own handwriting', 'Not rust. Rust does not have fingers. And the trail goes under the Ward B door.', 4200);
     }
   }
 
@@ -1021,6 +1265,10 @@ export class Game {
     } else if (s.powerOn && s.stage >= 3) {
       lampMul *= 0.92 + Math.sin(this.time * 31) * 0.05 * (s.stage - 2);
     }
+    if (this.lampOutT > 0) {
+      this.lampOutT -= dt;
+      lampMul = 0;
+    }
     L.lamp.intensity = 55 * lampMul;
     (L.lampBulb.material as THREE.MeshBasicMaterial).color.setScalar(s.powerOn ? 1 : 0.05).multiply(new THREE.Color(1, 0.85, 0.6));
     L.boothFill.intensity = (s.powerOn ? 7 : 0) * (this.flickerT > 0 ? lampMul : 1);
@@ -1037,6 +1285,8 @@ export class Game {
       if (near > 0 && Math.random() < near * 0.5) flick *= 0.05;
       if (Math.sin(this.time * 0.37 + i * 2.1) > 0.97) flick *= 0.2;
       const dead = i === 1 ? 0 : 1;
+      // dawn: the tubes die one after another from the far end
+      if (this.dawnT > 0 && l.position.x > 14 - this.dawnT * 1.3) flick *= Math.random() < 0.08 ? 0.6 : 0.02;
       l.intensity = emergency ? (0.9 + Math.sin(this.time * 2 + i) * 0.4) * (1 - near * 0.8) : 3.2 * flick * dead;
       l.color.set(emergency ? 0xff3a2a : 0xa9d8c4);
       (L.corridorBulbs[i].material as THREE.MeshBasicMaterial).color.set(emergency ? 0x5a0d08 : 0xcfeee0);
@@ -1094,7 +1344,7 @@ export class Game {
     const h = this.hovered;
     const heldE = this.input.keys.has('KeyE');
     if (this.player.mode === 'desk') {
-      this.hud.prompt(h?.id === 'lever' ? 'Click: open the trapdoor under them' : null);
+      this.hud.prompt(h?.id === 'lever' ? 'Click: open the trapdoor under them' : h?.id === 'phone' ? (this.call ? 'Click: answer the phone' : 'The desk phone') : h?.id === 'photo' ? 'Click: pick up the photograph' : null);
       this.breakerHold = 0;
       return;
     }
@@ -1113,7 +1363,16 @@ export class Game {
     if (h?.id === 'stain') {
       const t = this.sim.todoItem('mop');
       if (!t || t.done) this.hud.prompt('It has dried into the grout');
+      else if (!this.hasMop) this.hud.prompt('You need the mop. It is in the bucket against the wall.');
       else this.hud.prompt('Hold E and move the mouse: mop', this.mopProgress);
+      return;
+    }
+    if (h?.id === 'prop' && h.prompt === 'Bucket') {
+      this.hud.prompt(this.hasMop ? 'The bucket' : 'E: take the mop');
+      return;
+    }
+    if (h?.id === 'phone' || h?.id === 'photo') {
+      this.hud.prompt(h.id === 'phone' ? (this.call ? 'E: answer the phone' : 'The desk phone') : 'E: pick up the photograph');
       return;
     }
     if (h?.id === 'cabinet') {

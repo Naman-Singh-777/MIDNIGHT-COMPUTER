@@ -1,5 +1,7 @@
 # MIDNIGHT: task log, round 4
 
+Round 5 is done. Read `docs/generated/MIDNIGHT_ROUND5_REPORT.md` for the latest state.
+
 Live build (after the two clicks below): https://naman-singh-777.github.io/MIDNIGHT/
 Repo: https://github.com/Naman-Singh-777/MIDNIGHT-COMPUTER (to be renamed MIDNIGHT).
 

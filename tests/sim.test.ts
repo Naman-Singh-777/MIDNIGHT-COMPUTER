@@ -418,3 +418,52 @@ describe('death, the tall one and the glass', () => {
     expect(sim.state.dead).toBe('nerves');
   });
 });
+
+describe('round 5: fear director, dawn walk, the count report', () => {
+  it('teaches with a harmless rat first, and never fires while the tall one is out', async () => {
+    const { FearDirector } = await import('../src/sim/fear');
+    const { Rng } = await import('../src/core/rng');
+    const fd = new FearDirector(new Rng(9));
+    const ctx = { minute: 100, zone: 'corridor' as const, moving: true, stalkerActive: false, stage: 0, patientPresent: false, powerOn: true };
+    let first: string | null = null;
+    for (let i = 0; i < 2000 && !first; i++) first = fd.tick(0.1, ctx);
+    expect(first).toBe('rat');
+    for (let i = 0; i < 2000; i++) expect(fd.tick(0.1, { ...ctx, stalkerActive: true })).toBeNull();
+  });
+
+  it('the booth stays quiet early in the night and starts changing later', async () => {
+    const { FearDirector, boothSafety } = await import('../src/sim/fear');
+    const { Rng } = await import('../src/core/rng');
+    expect(boothSafety(30)).toBe(0);
+    expect(boothSafety(240)).toBe(3);
+    const fd = new FearDirector(new Rng(4));
+    const early = { minute: 30, zone: 'booth' as const, moving: false, stalkerActive: false, stage: 0, patientPresent: false, powerOn: true };
+    for (let i = 0; i < 3000; i++) expect(fd.tick(0.1, early)).toBeNull();
+  });
+
+  it('dawn: the tall one walks out of the far end a few seconds later and paces past the ward door', () => {
+    const sim = new Simulation(5);
+    const phases: string[] = [];
+    sim.bus.on('dawn', ({ phase }) => phases.push(phase));
+    sim.state.minute = 285.9;
+    for (let i = 0; i < 40; i++) sim.tick(0.1);
+    expect(phases).toContain('start');
+    expect(sim.stalker.active).toBe(false);
+    for (let i = 0; i < 80; i++) sim.tick(0.1);
+    expect(phases).toContain('figure');
+    expect(sim.stalker.active).toBe(true);
+  });
+
+  it('reporting the count locks the ward and Pell does not come back', () => {
+    const sim = new Simulation(5);
+    sim.reportCount(true);
+    expect(sim.state.wardLocked).toBe(true);
+    expect(sim.state.pellGone).toBe(true);
+  });
+
+  it('June Quill is on the records as dead', () => {
+    const sim = new Simulation(5);
+    const june = sim.state.registry.find((r) => r.id === 'C_june')!;
+    expect(june.alive).toBe(false);
+  });
+});

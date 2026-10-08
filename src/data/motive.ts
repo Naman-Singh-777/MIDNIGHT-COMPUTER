@@ -29,5 +29,5 @@ export const TODO: Omit<TodoItem, 'shown' | 'done' | 'missed'>[] = [
   { id: 'mop', text: "Mop the floor by the bucket. Pell says it's rust.", where: 'East corridor, by the bucket', at: 0, due: 45 },
   { id: 'file', text: "File last week's forms in the cabinet behind your chair.", where: 'Booth, grey filing cabinet', at: 0, due: 45 },
   { id: 'count1', text: '2 a.m. head count. Look through the slot in the Ward B door.', where: 'East corridor, Ward B door', at: 150, due: 190 },
-  { id: 'count_dawn', text: "Nearly six. Go to the Ward B door. She's in bed 9.", where: 'East corridor, Ward B door', at: 286, due: 300 },
+  { id: 'count_dawn', text: 'Six o\'clock. Walk to the Ward B door and look through the slot. Something is in the corridor: crouch and keep quiet.', where: 'East corridor, Ward B door', at: 286, due: 300 },
 ];

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { fabricTexture } from './faces';
+import { fabricTexture, type FabricKind } from './faces';
 
 /**
  * A jointed human body built from smooth lathe pieces. Real proportions (about seven and a half heads),
@@ -31,6 +31,7 @@ export interface Arm {
   el: THREE.Group;
   hand: THREE.Group;
   fingers: THREE.Group[];
+  tips: THREE.Group[];
 }
 export interface Leg {
   side: number;
@@ -49,6 +50,7 @@ export interface Rig {
 }
 
 type Maker = {
+  own?(m: THREE.Material): void;
   mat(c: THREE.Color, map?: THREE.Texture | null): THREE.MeshLambertMaterial;
   mesh(geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x?: number, y?: number, z?: number): THREE.Mesh;
 };
@@ -72,14 +74,26 @@ export function buildBody(spec: BodySpec, m: Maker): Rig {
   const b = spec.build;
   const fem = spec.female;
   const creature = spec.outfit === 'creature';
-  const fab = creature ? null : fabricTexture();
+  // each outfit gets its own cloth: wool, cotton, knit, oilcloth, leather
+  const kind: FabricKind =
+    spec.outfit === 'cardigan' ? 'knit' : spec.outfit === 'uniform' || spec.outfit === 'nightgown' ? 'cotton' : spec.outfit === 'raincoat' ? 'oilcloth' : spec.outfit === 'work' ? 'leather' : 'wool';
+  const fab = creature ? null : fabricTexture(kind);
+  const cloth = (c: THREE.Color, k: FabricKind = kind): THREE.Material => {
+    if (k === 'oilcloth' || k === 'leather') {
+      const sm = new THREE.MeshStandardMaterial({ color: c, map: fabricTexture(k), roughness: k === 'oilcloth' ? 0.32 : 0.55, metalness: 0 });
+      m.own?.(sm);
+      return sm;
+    }
+    return m.mat(c, fabricTexture(k));
+  };
   const skin = m.mat(spec.skin, spec.skinMap ?? null);
-  const top = creature ? skin : m.mat(spec.top, fab);
-  const topDark = creature ? skin : m.mat(spec.top.clone().multiplyScalar(0.72), fab);
-  const bottom = creature ? skin : m.mat(spec.bottom, fab);
-  const accent = m.mat(spec.accent, fab);
+  const top = creature ? skin : cloth(spec.top);
+  const topDark = creature ? skin : cloth(spec.top.clone().multiplyScalar(0.72));
+  const bottom = creature ? skin : cloth(spec.bottom, 'wool');
+  const accent = m.mat(spec.accent, fabricTexture('cotton'));
   const shoe = spec.barefoot || creature ? skin : m.mat(spec.shoes);
-  const lower = COATED.includes(spec.outfit) ? bottom : bottom;
+  const lower = bottom;
+  void COATED;
 
   const root = new THREE.Group();
   const pelvis = new THREE.Group();
@@ -96,15 +110,18 @@ export function buildBody(spec: BodySpec, m: Maker): Rig {
   chest.position.y = 0.04 * k;
   chest.rotation.x = spec.hunch * 0.35;
   pelvis.add(chest);
+  // waist, belly, ribcage, then shoulders that slope down from the neck instead of a flat shelf
   const prof: [number, number][] = [
     [0.13 * b, 0],
-    [(fem ? 0.122 : 0.135) * b, 0.12],
-    [(fem ? 0.155 : 0.155) * b + (b > 1.1 ? 0.03 : 0), 0.26],
-    [(fem ? 0.165 : 0.18) * b, 0.38],
-    [(fem ? 0.16 : 0.185) * b, 0.45],
-    [0.12 * b, 0.51],
-    [0.055, 0.55],
-    [0.001, 0.56],
+    [(fem ? 0.118 : 0.128) * b, 0.12],
+    [(fem ? 0.15 : 0.15) * b + (b > 1.1 ? 0.03 : 0), 0.26],
+    [(fem ? 0.158 : 0.166) * b, 0.36],
+    [(fem ? 0.152 : 0.168) * b, 0.42],
+    [(fem ? 0.135 : 0.15) * b, 0.47],
+    [0.105 * b, 0.51],
+    [0.072, 0.54],
+    [0.055, 0.555],
+    [0.001, 0.565],
   ];
   const torsoGeo = new THREE.LatheGeometry(
     prof.map(([r, y]) => new THREE.Vector2(r, y * k)),
@@ -112,6 +129,12 @@ export function buildBody(spec: BodySpec, m: Maker): Rig {
   );
   const torso = m.mesh(torsoGeo, top, chest);
   torso.scale.z = 0.66;
+  // trapezius: the slope from the side of the neck to the top of the arm
+  for (const sd of [-1, 1]) {
+    const trap = m.mesh(new THREE.SphereGeometry(0.06 * b, 14, 10), top, chest, sd * 0.09 * b, 0.505 * k, -0.01);
+    trap.scale.set(1.75, 0.5, 1.05);
+    trap.rotation.z = sd * -0.42;
+  }
   if (fem && !creature) {
     for (const sd of [-1, 1]) {
       const bust = m.mesh(new THREE.SphereGeometry(0.062 * b, 12, 10), top, chest, sd * 0.065 * b, 0.36 * k, 0.07 * b);
@@ -159,7 +182,12 @@ export function buildBody(spec: BodySpec, m: Maker): Rig {
     if (spec.outfit === 'cassock' || spec.outfit === 'habit') {
       m.mesh(new THREE.TorusGeometry(0.058, 0.012, 6, 16), accent, chest, 0, 0.545 * k, 0).rotation.x = Math.PI / 2;
     } else if (spec.outfit !== 'nightgown') {
-      m.mesh(new THREE.TorusGeometry(0.064, 0.016, 6, 16), spec.outfit === 'fur' ? m.mat(spec.accent, fab) : accent, chest, 0, 0.535 * k, 0).rotation.x = Math.PI / 2;
+      // a shirt collar: a thin band and two points turned down over the lapels
+      m.mesh(new THREE.TorusGeometry(0.058, 0.007, 6, 18), accent, chest, 0, 0.54 * k, 0.004).rotation.x = Math.PI / 2;
+      for (const sd of [-1, 1]) {
+        const pt = m.mesh(new THREE.BoxGeometry(0.034, 0.045, 0.004), accent, chest, sd * 0.022, 0.515 * k, 0.05);
+        pt.rotation.set(-0.5, 0, sd * 0.5);
+      }
     }
     if (spec.outfit === 'fur') {
       const fur = m.mesh(new THREE.TorusGeometry(0.12 * b, 0.05, 8, 20), m.mat(spec.accent, fab), chest, 0, 0.5 * k, 0);
@@ -225,13 +253,14 @@ export function buildBody(spec: BodySpec, m: Maker): Rig {
   const al = spec.armLength ?? 1;
   const upLen = 0.3 * k * al;
   const foreLen = 0.27 * k * al;
-  const shW = (fem ? 0.165 : 0.19) * b;
+  const shW = (fem ? 0.158 : 0.175) * b;
   for (const sd of [-1, 1]) {
     const sh = new THREE.Group();
     sh.position.set(sd * shW, 0.455 * k, 0);
     chest.add(sh);
-    const cap = m.mesh(new THREE.SphereGeometry(0.052 * b, 12, 10), top, sh);
-    cap.scale.set(1, 0.85, 0.9);
+    // deltoid: rounds over the top of the arm and runs a third of the way down it
+    const delt = m.mesh(new THREE.SphereGeometry(0.05 * b, 14, 10), top, sh, sd * 0.004, -0.035, 0);
+    delt.scale.set(1.02, 1.45, 0.92);
     const up = m.mesh(limbGeo(0.052 * b, 0.042 * b, upLen), top, sh);
     up.scale.z = 0.92;
     const el = new THREE.Group();
@@ -242,23 +271,41 @@ export function buildBody(spec: BodySpec, m: Maker): Rig {
     const hand = new THREE.Group();
     hand.position.y = -foreLen - 0.015;
     el.add(hand);
-    const palm = m.mesh(new THREE.SphereGeometry(1, 10, 8), skin, hand, 0, -0.045, 0);
-    palm.scale.set(0.034, 0.05, 0.016);
+    // wrist, palm with a heel and knuckles, two-jointed fingers of different lengths, a thumb that sits across
+    m.mesh(limbGeo(0.026, 0.028, 0.03, 10), skin, hand, 0, 0.005, 0).scale.z = 0.7;
+    const palm = m.mesh(new THREE.SphereGeometry(1, 14, 10), skin, hand, 0, -0.05, 0.002);
+    palm.scale.set(0.037, 0.048, 0.017);
+    const knuck = m.mesh(new THREE.SphereGeometry(1, 12, 6), skin, hand, 0, -0.084, 0.001);
+    knuck.scale.set(0.036, 0.014, 0.016);
     const fingers: THREE.Group[] = [];
-    const fl = creature ? 0.11 : 0.05;
+    const tips: THREE.Group[] = [];
+    const lens = creature ? [0.11, 0.12, 0.12, 0.1] : [0.044, 0.052, 0.049, 0.038];
     for (let f = 0; f < 4; f++) {
       const fg = new THREE.Group();
-      fg.position.set(sd * (-0.022 + f * 0.0145), -0.088, 0);
+      fg.position.set(sd * (-0.024 + f * 0.0158), -0.09, 0);
+      fg.rotation.z = sd * (f - 1.5) * 0.06;
       hand.add(fg);
-      m.mesh(limbGeo(0.0078, 0.0062, fl * (f === 1 || f === 2 ? 1 : 0.86), 6), skin, fg);
+      const l = lens[f];
+      const r = creature ? 0.006 : 0.0082 - f * 0.0005;
+      m.mesh(limbGeo(r, r * 0.92, l * 0.55, 7), skin, fg);
+      const tip = new THREE.Group();
+      tip.position.y = -l * 0.55;
+      fg.add(tip);
+      m.mesh(limbGeo(r * 0.9, r * 0.75, l * 0.45, 7), skin, tip);
       fingers.push(fg);
+      tips.push(tip);
     }
     const th = new THREE.Group();
-    th.position.set(sd * -0.03, -0.045, 0.012);
-    th.rotation.z = sd * 0.7;
+    th.position.set(sd * -0.034, -0.035, 0.012);
+    th.rotation.set(-0.5, 0, sd * 0.75);
     hand.add(th);
-    m.mesh(limbGeo(0.009, 0.007, 0.04, 6), skin, th);
-    arms.push({ side: sd, sh, el, hand, fingers });
+    m.mesh(limbGeo(0.011, 0.009, 0.03, 7), skin, th);
+    const thTip = new THREE.Group();
+    thTip.position.y = -0.03;
+    thTip.rotation.x = -0.3;
+    th.add(thTip);
+    m.mesh(limbGeo(0.009, 0.0075, 0.026, 7), skin, thTip);
+    arms.push({ side: sd, sh, el, hand, fingers, tips });
   }
   return { root, pelvis, chest, headMount, arms, legs, skirt, scaleY: k };
 }

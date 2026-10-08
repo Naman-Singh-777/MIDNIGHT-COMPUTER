@@ -12,6 +12,20 @@ Commits: `3415bf3` round 1, `eb0c963` round 2, `b7d2d0e` roadmap, `91d1c9c` roun
 
 ---
 
+## Round 5 (8 Oct 2026): eyes, fear director, dawn walk, memory theme
+
+Full report: `docs/generated/MIDNIGHT_ROUND5_REPORT.md`. In short:
+* Real eyeballs that track you (fakes lock on early, one eye trails, stop blinking), face bones per person, jaw underside, better nose.
+* Sloped shoulders, two-jointed fingers, five cloth types, arms that clear the body at rest.
+* Fear director: harmless rat and Pell's false alarm first, then echo steps, running, a figure at the far end, and the booth changing behind your back (mug, terminal, photo face down, dead-line call in your own voice, lamp out, a knock). Later, echo steps can be real.
+* The creature searches, learns and waits at the door. Dawn is now a scripted walk with the creature pacing past the Ward B door.
+* New cast: Hester Bloom, Abel Hollis, June Quill. Goodbye lines. Kessler explains the fakes: they are what the memory ward takes out of people, walking back.
+* You answer the phone yourself and can miss calls. The photo can be picked up. The mop has to be fetched. Reporting the head count locks Ward B and costs you Pell.
+* Desk: oak grain, tarnished brass, worn leather, aged plastic, bent paper, screws and drawer gaps.
+* 35 tests, smoke test clean, all headless.
+
+---
+
 ## Round 4 (8 Oct 2026): danger, human bodies, cast, desk, hosting
 
 **Your brief:** egg heads and geometric bodies; desk looked machine-made; no threat of death or loss; no build-up; corridor not scary; confusing words (Understudy, lamp, ledger, "open the glass"); story should be heartbreaking with distinct voices; reviewing people through glass is passive; host on GitHub Pages named MIDNIGHT; read all research.

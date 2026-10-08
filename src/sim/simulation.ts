@@ -5,6 +5,7 @@ import { BEATS } from '../data/story';
 import { MOTHER_ENTRY, MOTHER_ID, TODO, WARD_B_START } from '../data/motive';
 import { CAST, CAST_BY_ID, COPY_GREET } from '../data/cast';
 import { Stalker, type StalkerInput } from './stalker';
+import { FearDirector } from './fear';
 import { swapDigits } from './patients';
 import { Director } from './director';
 import { distortionFor } from './perception';
@@ -62,6 +63,10 @@ export interface SimState {
   motherTaken: boolean;
   dead: DeathCause | null;
   breach: { phase: 'crack' | 'inside'; t: number } | null;
+  dawn: { t: number; figure: boolean } | null;
+  hollisIn: boolean; // the porter you let in walks the corridor with you at six
+  wardLocked: boolean; // you reported the count; Pell locked himself in with them
+  pellGone: boolean;
 }
 
 export interface AskResult {
@@ -92,6 +97,7 @@ export class Simulation {
     this.presRng = new Rng(seed ^ 0x9e3779b9);
     this.director = new Director(new Rng(seed ^ 0x51ed270b));
     this.gazeRng = new Rng(seed ^ 0x2545f491);
+    this.fearDir = new FearDirector(new Rng(seed ^ 0x6f1d33));
     this.state = {
       minute: 0,
       ended: false,
@@ -124,6 +130,10 @@ export class Simulation {
       motherTaken: false,
       dead: null,
       breach: null,
+      dawn: null,
+      hollisIn: false,
+      wardLocked: false,
+      pellGone: false,
     };
     this.addCastRecords();
   }
@@ -133,11 +143,13 @@ export class Simulation {
     const filler = makeRegistry(this.rng, CAST.length);
     CAST.forEach((c, i) => {
       const f = filler[i];
-      this.state.registry.push({ ...f, id: `C_${c.id}`, name: c.name, photoMark: c.mark, note: c.note ?? '' });
+      this.state.registry.push({ ...f, id: `C_${c.id}`, name: c.name, photoMark: c.mark, note: c.note ?? '', alive: !c.dead });
     });
   }
 
   readonly stalker = new Stalker();
+  readonly fearDir: FearDirector;
+  private pendingSummon: { t: number; x: number } | null = null;
   private stalkerIn: StalkerInput = { x: 0, z: 0.5, noise: 0, noiseRange: 0, torchOnIt: false, inBooth: true, doorClosed: false };
 
   /** Where the player is and how loud they are. Presentation calls this every frame. */
@@ -160,7 +172,7 @@ export class Simulation {
 
   private runStalker(dt: number): void {
     const s = this.state;
-    this.stalker.rage = s.score.admittedUnderstudies;
+    if (!s.dawn) this.stalker.rage = s.score.admittedUnderstudies;
     for (const e of this.stalker.tick(dt, this.stalkerIn)) {
       this.bus.emit('stalker', { event: e });
       if (e === 'kill') this.die('stalker');
@@ -171,6 +183,60 @@ export class Simulation {
       const d = Math.hypot(this.stalkerIn.x - this.stalker.x, this.stalkerIn.z - this.stalker.z);
       if (d < 6) s.fear = Math.min(1, s.fear + dt * (6 - d) * 0.05);
     }
+  }
+
+  private runFear(dt: number): void {
+    const s = this.state;
+    const i = this.stalkerIn;
+    if (this.pendingSummon) {
+      this.pendingSummon.t -= dt;
+      if (this.pendingSummon.t <= 0) {
+        this.summonStalker(this.pendingSummon.x, 45);
+        this.pendingSummon = null;
+      }
+    }
+    const e = this.fearDir.tick(dt, {
+      minute: s.minute,
+      zone: s.zone,
+      moving: i.noise > 0,
+      stalkerActive: this.stalker.active,
+      stage: s.stage,
+      patientPresent: s.phase === 'present',
+      powerOn: s.powerOn,
+    });
+    if (!e) return;
+    const real = e === 'echo_steps' && this.fearDir.realEcho;
+    this.bus.emit('fear', { event: e, real });
+    if (real) {
+      // when the steps stop, it is standing where they were
+      const x = i.x - 6 > 2.6 ? i.x - 6 : i.x + 6;
+      this.pendingSummon = { t: 7, x };
+    }
+    if (e === 'dead_line_call') this.spike(0.4, 3);
+  }
+
+  /** Six o'clock. The corridor dies a light at a time, then it walks out of the far end and paces past the ward door. */
+  private runDawn(dt: number): void {
+    const s = this.state;
+    const d = s.dawn;
+    if (!d) return;
+    d.t += dt;
+    if (!d.figure && d.t > 9) {
+      d.figure = true;
+      this.summonStalker(13.8);
+      this.stalker.patrol(6.0, 11.2);
+      this.stalker.rage = Math.max(0, s.score.admittedUnderstudies - (s.hollisIn ? 1 : 0));
+      this.bus.emit('dawn', { phase: 'figure' });
+    }
+  }
+
+  /** After the 2 a.m. count: report it and Pell locks Ward B from the inside. Fewer things get out. Pell does not come back. */
+  reportCount(report: boolean): void {
+    const s = this.state;
+    if (!report) return;
+    s.wardLocked = true;
+    s.pellGone = true;
+    this.say('pell_lock', "Right. Right. I'll lock it from this side then. Someone has to. Don't come to the door, whatever you hear. Don't.", 'Orderly Pell', true);
   }
 
   /** A fake left waiting too long at the glass does not leave. It comes through. Duck under the desk and stay down. */
@@ -221,6 +287,8 @@ export class Simulation {
     this.runStare(dt);
     this.runStalker(dt);
     this.runBreach(dt);
+    this.runFear(dt);
+    this.runDawn(dt);
     if (s.sanity <= 0) this.die('nerves');
     if (s.ended) return;
     this.runBreaker();
@@ -251,7 +319,11 @@ export class Simulation {
       if (!t.shown && s.minute >= t.at) {
         t.shown = true;
         changed = true;
-        if (t.id === 'count_dawn') this.summonStalker(13.5);
+        if (t.id === 'count_dawn') {
+          s.dawn = { t: 0, figure: false };
+          this.stalker.dismiss();
+          this.bus.emit('dawn', { phase: 'start' });
+        }
       }
       if (t.shown && !t.done && !t.missed && s.minute >= t.due && t.id !== 'count_dawn') {
         t.missed = true;
@@ -289,6 +361,7 @@ export class Simulation {
       const count = this.wardCount();
       this.bus.emit('wardCounted', { id, count });
       if (id === 'count1') {
+        this.bus.emit('choice', { id: 'report_count' });
         if (count.extras > 0) {
           this.spike(0.6, 8);
           this.say('count1_res', `You got ${count.actual}? My sheet says ${count.register}. Don't count again. Get back to your desk and shut the door.`, 'Orderly Pell', true);
@@ -347,6 +420,11 @@ export class Simulation {
         continue;
       }
       if (b.needsFinale && !s.finaleDone) continue;
+      if (b.id === 'dawn' && s.pellGone) {
+        // Pell locked himself in at two. Whoever is holding the door now, it is using his voice.
+        this.say(b.id, "It's six. Come on. I'm holding the door. Come on. Come on.", 'Orderly Pell', false, true);
+        return;
+      }
       // never talk over the officer's own interview; wait for a gap
       if (s.phase === 'present' && s.asked.length > 0 && s.minute < b.at + 8) continue;
       this.say(b.id, b.text, b.who, b.call ?? false, b.wrong ?? false);
@@ -628,6 +706,7 @@ export class Simulation {
     }
     if (s.breach) s.breach = null;
     if (v === 'admit' && p.registryId === MOTHER_ID) s.motherTaken = true;
+    if (v === 'admit' && p.castId === 'hollis' && !mimic) s.hollisIn = true;
     if (!mimic) {
       if (v === 'refuse') {
         wrong = true;
@@ -700,7 +779,7 @@ export class Simulation {
           this.spike(0.7, 8);
           this.bus.emit('cue', { cue: 'overhead_steps', intensity: 0.8 });
           this.bus.emit('cue', { cue: 'whisper', intensity: 0.8 });
-          this.summonStalker(13.5, 90);
+          if (!s.wardLocked) this.summonStalker(13.5, 90);
           break;
         case 'observation_breach':
           this.bumpStage();

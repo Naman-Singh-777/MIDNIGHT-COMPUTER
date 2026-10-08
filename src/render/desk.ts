@@ -17,12 +17,141 @@ export interface Desk {
   slip: DrawSurface;
   slipMesh: THREE.Mesh;
   phoneLed: THREE.Mesh;
+  photo: THREE.Group;
+  mug: THREE.Group;
+  hits: THREE.Mesh[];
 }
 
 const TOP = 0.79;
 
 function std(color: number, rough: number, metal = 0, map?: THREE.Texture): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, map: map ?? null });
+}
+
+function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, repeat = 1): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  draw(c.getContext('2d')!);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
+  t.anisotropy = 4;
+  return t;
+}
+
+/** Quarter-sawn oak: long directional grain, ray flecks, darker wear where hands and sleeves rub. */
+function oakTexture(): THREE.CanvasTexture {
+  return canvasTex(1024, 256, (g) => {
+    g.fillStyle = '#8a5e3a';
+    g.fillRect(0, 0, 1024, 256);
+    for (let y = 0; y < 256; y++) {
+      const v = Math.sin(y * 0.21 + Math.sin(y * 0.031) * 6) * 16 + Math.sin(y * 1.7) * 4;
+      g.fillStyle = `rgba(${v > 0 ? '60,34,18' : '170,120,80'},${Math.min(0.5, Math.abs(v) / 40)})`;
+      g.fillRect(0, y, 1024, 1);
+    }
+    for (let i = 0; i < 260; i++) {
+      // ray flecks across the grain
+      g.fillStyle = `rgba(200,160,110,${0.08 + Math.random() * 0.12})`;
+      g.fillRect(Math.random() * 1024, Math.random() * 256, 6 + Math.random() * 18, 1.5);
+    }
+    for (let i = 0; i < 90; i++) {
+      g.strokeStyle = `rgba(240,220,190,${0.05 + Math.random() * 0.08})`;
+      g.lineWidth = 0.7;
+      const x = Math.random() * 1024, y = Math.random() * 256;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + 20 + Math.random() * 80, y + (Math.random() - 0.5) * 8);
+      g.stroke();
+    }
+    // a band of wear where forearms rest, and a few dark rings from old cups
+    const wear = g.createLinearGradient(0, 160, 0, 256);
+    wear.addColorStop(0, 'rgba(30,16,8,0)');
+    wear.addColorStop(1, 'rgba(30,16,8,0.25)');
+    g.fillStyle = wear;
+    g.fillRect(0, 160, 1024, 96);
+    for (let i = 0; i < 4; i++) {
+      g.strokeStyle = 'rgba(40,20,10,0.25)';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(200 + Math.random() * 600, 80 + Math.random() * 120, 16 + Math.random() * 4, 0, 7);
+      g.stroke();
+    }
+  });
+}
+
+/** Brass that has been handled for thirty years: bright where fingers go, brown and green in the corners. */
+function brassTexture(): THREE.CanvasTexture {
+  return canvasTex(256, 256, (g) => {
+    g.fillStyle = '#c8a050';
+    g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 70; i++) {
+      const x = Math.random() * 256, y = Math.random() * 256, r = 10 + Math.random() * 40;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, Math.random() < 0.3 ? 'rgba(70,110,80,0.35)' : 'rgba(80,50,20,0.35)');
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    for (let i = 0; i < 120; i++) {
+      g.strokeStyle = `rgba(255,240,200,${Math.random() * 0.2})`;
+      g.lineWidth = 0.5;
+      const x = Math.random() * 256, y = Math.random() * 256;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + Math.random() * 20, y + Math.random() * 3);
+      g.stroke();
+    }
+  });
+}
+
+/** Green desk leather: pebbled grain, a lighter worn patch in the middle where the forms go, scuffed edges. */
+function leatherTexture(): THREE.CanvasTexture {
+  return canvasTex(512, 512, (g) => {
+    g.fillStyle = '#1f3d2c';
+    g.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 9000; i++) {
+      g.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '120,160,130'},${Math.random() * 0.12})`;
+      g.beginPath();
+      g.arc(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 1.5, 0, 7);
+      g.fill();
+    }
+    const worn = g.createRadialGradient(256, 280, 20, 256, 280, 220);
+    worn.addColorStop(0, 'rgba(150,170,140,0.25)');
+    worn.addColorStop(1, 'rgba(150,170,140,0)');
+    g.fillStyle = worn;
+    g.fillRect(0, 0, 512, 512);
+    g.strokeStyle = 'rgba(10,20,14,0.5)';
+    for (let i = 0; i < 25; i++) {
+      g.lineWidth = 0.6;
+      const x = Math.random() * 512, y = Math.random() * 512;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (Math.random() - 0.5) * 60, y + (Math.random() - 0.5) * 20);
+      g.stroke();
+    }
+    g.strokeStyle = 'rgba(160,140,90,0.35)';
+    g.setLineDash([4, 3]);
+    g.strokeRect(10, 10, 492, 492); // stitching
+  });
+}
+
+/** Moulded beige plastic, slightly yellowed, with a fine texture and grime in the corners. */
+function plasticTexture(): THREE.CanvasTexture {
+  return canvasTex(256, 256, (g) => {
+    g.fillStyle = '#c4b896';
+    g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 5000; i++) {
+      g.fillStyle = `rgba(${Math.random() < 0.5 ? '255,250,230' : '80,70,50'},${Math.random() * 0.06})`;
+      g.fillRect(Math.random() * 256, Math.random() * 256, 1, 1);
+    }
+    const yel = g.createLinearGradient(0, 0, 0, 256);
+    yel.addColorStop(0, 'rgba(140,110,40,0.15)');
+    yel.addColorStop(1, 'rgba(140,110,40,0)');
+    g.fillStyle = yel;
+    g.fillRect(0, 0, 256, 256);
+  });
 }
 
 function photoTexture(): THREE.CanvasTexture {
@@ -76,13 +205,16 @@ function photoTexture(): THREE.CanvasTexture {
 export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Desk {
   const g = new THREE.Group();
   scene.add(g);
-  const oak = new THREE.MeshLambertMaterial({ map: mats.wood.map, bumpMap: mats.wood.map, bumpScale: 1.0, color: 0x9a6a44 });
-  const oakDark = new THREE.MeshLambertMaterial({ map: mats.wood.map, bumpMap: mats.wood.map, bumpScale: 1.0, color: 0x5a3c26 });
-  const brass = std(0xb08a3e, 0.35, 0.85);
+  void mats;
+  const oakMap = oakTexture();
+  const oak = new THREE.MeshStandardMaterial({ map: oakMap, bumpMap: oakMap, bumpScale: 0.6, roughness: 0.58, color: 0xd8b090 });
+  const oakDark = new THREE.MeshStandardMaterial({ map: oakMap, bumpMap: oakMap, bumpScale: 0.6, roughness: 0.7, color: 0x8a6a50 });
+  const brass = new THREE.MeshStandardMaterial({ map: brassTexture(), roughness: 0.42, metalness: 0.85, color: 0xffffff });
   const bakelite = std(0x121110, 0.3, 0.05);
-  const beige = std(0xb7ab8c, 0.6, 0.02);
-  const beigeDark = std(0x8f8468, 0.65, 0.02);
-  const paper = new THREE.MeshLambertMaterial({ color: 0xe6dcc0 });
+  const plastic = plasticTexture();
+  const beige = new THREE.MeshStandardMaterial({ map: plastic, bumpMap: plastic, bumpScale: 0.2, roughness: 0.62, color: 0xe8e0c8 });
+  const beigeDark = new THREE.MeshStandardMaterial({ map: plastic, roughness: 0.7, color: 0xb0a488 });
+
   const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = g, shadow = true): THREE.Mesh => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
@@ -106,6 +238,8 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
       const pull = add(new THREE.TorusGeometry(0.035, 0.006, 6, 14, Math.PI), brass, px, y + 0.02, -0.35);
       pull.rotation.z = Math.PI;
       add(new THREE.BoxGeometry(0.1, 0.03, 0.006), brass, px, y + 0.05, -0.352); // card holder
+      for (const sx2 of [-1, 1]) add(new THREE.CylinderGeometry(0.0045, 0.0045, 0.003, 8), std(0x7a6a40, 0.5, 0.8), px + sx2 * 0.035, y + 0.02, -0.349).rotation.x = Math.PI / 2; // pull screws
+      add(new THREE.BoxGeometry(0.62, 0.004, 0.002), std(0x0a0806, 0.9), px, y + 0.095, -0.369); // the gap above each drawer
     }
     add(rbox(0.68, 0.06, 0.82, 0.006), oakDark, px, 0.03, -0.78); // plinth
   }
@@ -114,7 +248,8 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
   add(new THREE.BoxGeometry(1.98, 0.62, 0.02), oakDark, 0, 0.42, -1.16); // modesty panel
 
   // ---------------------------------------------------------------- blotter, papers, pens
-  const leather = new THREE.MeshLambertMaterial({ color: 0x1d3a2a });
+  const leatherMap = leatherTexture();
+  const leather = new THREE.MeshStandardMaterial({ map: leatherMap, bumpMap: leatherMap, bumpScale: 0.5, roughness: 0.75, color: 0xffffff });
   add(rbox(0.74, 0.008, 0.5, 0.003), leather, 0.05, TOP + 0.004, -0.62, g, false);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(new THREE.BoxGeometry(0.07, 0.01, 0.07), std(0x2a1a12, 0.5), 0.05 + sx * 0.34, TOP + 0.006, -0.62 + sz * 0.22, g, false).rotation.y = Math.PI / 4;
   // the form, on a clipboard
@@ -125,7 +260,21 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
   const slipMesh = add(new THREE.PlaneGeometry(0.23, 0.31), new THREE.MeshLambertMaterial({ map: slip.texture }), 0.05, TOP + 0.0175, -0.51, g, false);
   slipMesh.rotation.set(-Math.PI / 2, 0, 0.08);
   // loose forms
-  for (let i = 0; i < 6; i++) add(new THREE.BoxGeometry(0.21, 0.002, 0.29), paper, -0.48 + Math.sin(i) * 0.01, TOP + 0.002 + i * 0.003, -0.45, g, false).rotation.y = 0.2 + Math.sin(i * 2) * 0.06;
+  // loose forms: each sheet a little bent, a little different in tone, the top one dog-eared
+  for (let i = 0; i < 6; i++) {
+    const sheet = new THREE.PlaneGeometry(0.21, 0.29, 6, 8);
+    const sp = sheet.attributes.position as THREE.BufferAttribute;
+    for (let v = 0; v < sp.count; v++) {
+      const x = sp.getX(v), y = sp.getY(v);
+      let z = Math.sin((x + 0.105) * 9 + i) * 0.002 + Math.max(0, x - 0.06) * 0.03 * (i === 5 ? 1 : 0.2);
+      if (i === 5 && x > 0.07 && y > 0.11) z += (x - 0.07 + y - 0.11) * 0.25; // dog-ear
+      sp.setZ(v, z);
+    }
+    sheet.computeVertexNormals();
+    const tone = [0xe6dcc0, 0xebe3cc, 0xdcd2b4, 0xe9e0c6, 0xe2d8bc, 0xefe8d4][i];
+    const m = add(sheet, new THREE.MeshLambertMaterial({ color: tone, side: THREE.DoubleSide }), -0.48 + Math.sin(i) * 0.012, TOP + 0.003 + i * 0.0025, -0.45, g, false);
+    m.rotation.set(-Math.PI / 2, 0, 0.2 + Math.sin(i * 2) * 0.07);
+  }
   // pen pot with pens and pencils
   const pot = add(new THREE.CylinderGeometry(0.035, 0.032, 0.1, 16, 1, true), std(0x3a2a20, 0.6), 0.55, TOP + 0.05, -0.92);
   (pot.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
@@ -142,12 +291,14 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
   }
   add(rbox(0.12, 0.016, 0.08, 0.004), std(0x5a1414, 0.5, 0.4), 0.66, TOP + 0.008, -0.5);
   // mug with a coffee ring
+  const mug = new THREE.Group();
+  g.add(mug);
   const mugPts: THREE.Vector2[] = [];
   for (let i = 0; i <= 8; i++) mugPts.push(new THREE.Vector2(0.038 + Math.sin(i / 8) * 0.003, (i / 8) * 0.095));
   mugPts.push(new THREE.Vector2(0.033, 0.095), new THREE.Vector2(0.033, 0.008));
-  add(new THREE.LatheGeometry(mugPts, 20), std(0xd9d2c0, 0.4), -0.18, TOP, -0.56);
-  add(new THREE.CircleGeometry(0.033, 18), std(0x2a170c, 0.15), -0.18, TOP + 0.07, -0.56, g, false).rotation.x = -Math.PI / 2;
-  add(new THREE.TorusGeometry(0.024, 0.006, 8, 14, Math.PI * 1.2), std(0xd9d2c0, 0.4), -0.135, TOP + 0.05, -0.56).rotation.z = -Math.PI * 0.6;
+  add(new THREE.LatheGeometry(mugPts, 20), std(0xd9d2c0, 0.4), -0.18, TOP, -0.56, mug);
+  add(new THREE.CircleGeometry(0.033, 18), std(0x2a170c, 0.15), -0.18, TOP + 0.07, -0.56, mug, false).rotation.x = -Math.PI / 2;
+  add(new THREE.TorusGeometry(0.024, 0.006, 8, 14, Math.PI * 1.2), std(0xd9d2c0, 0.4), -0.135, TOP + 0.05, -0.56, mug).rotation.z = -Math.PI * 0.6;
   add(new THREE.RingGeometry(0.03, 0.04, 20), new THREE.MeshBasicMaterial({ color: 0x3a2412, transparent: true, opacity: 0.35 }), -0.27, TOP + 0.001, -0.5, g, false).rotation.x = -Math.PI / 2;
   // ashtray with two stubbed cigarettes
   add(new THREE.CylinderGeometry(0.06, 0.05, 0.02, 18), std(0x2c3a3c, 0.2, 0.3), 0.85, TOP + 0.01, -0.45);
@@ -191,6 +342,8 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
   const back = add(new THREE.CylinderGeometry(0.17, 0.24, 0.3, 4, 1), beigeDark, 0, 0.27, -0.34, crtGroup);
   back.rotation.set(Math.PI / 2, Math.PI / 4, 0);
   add(rbox(0.5, 0.36, 0.03, 0.02), std(0x2a2620, 0.7), 0, 0.28, 0.225, crtGroup); // bezel
+  add(new THREE.BoxGeometry(0.605, 0.445, 0.004), std(0x5a5240, 0.8), 0, 0.27, -0.06, crtGroup); // moulding seam where the two halves meet
+  for (const sx of [-1, 1]) add(new THREE.CylinderGeometry(0.006, 0.006, 0.004, 8), std(0x777060, 0.4, 0.8), sx * 0.27, 0.06, 0.232, crtGroup).rotation.x = Math.PI / 2;
   for (let i = 0; i < 7; i++) add(new THREE.BoxGeometry(0.004, 0.02, 0.18), beigeDark, -0.2 + i * 0.06, 0.495, -0.05, crtGroup); // vents
   add(rbox(0.5, 0.04, 0.36, 0.01), beige, 0, 0.02, 0, crtGroup); // plinth
   const crt = new DrawSurface(512, 384);
@@ -252,5 +405,14 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
   add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(coil), 240, 0.003, 5), bakelite, 0, 0, 0, phone);
   const phoneLed = add(new THREE.SphereGeometry(0.009, 8, 6), new THREE.MeshBasicMaterial({ color: 0x331100 }), 0.09, 0.03, 0.08, phone, false);
 
-  return { lampBulb, crt, crtScreen, slip, slipMesh, phoneLed };
+  // invisible handles for the things you can pick up or use from the chair
+  const hit = (id: string, w: number, h: number, d: number, x: number, y: number, z: number): THREE.Mesh => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial({ visible: false }));
+    m.position.set(x, y, z);
+    m.userData.interact = { id, prompt: id, range: 3 };
+    scene.add(m);
+    return m;
+  };
+  const hits = [hit('phone', 0.3, 0.2, 0.3, -0.3, TOP + 0.08, -0.9), hit('photo', 0.16, 0.2, 0.12, -0.55, TOP + 0.09, -0.98)];
+  return { lampBulb, crt, crtScreen, slip, slipMesh, phoneLed, photo: frame, mug, hits };
 }

@@ -238,6 +238,7 @@ export class Hud {
       <dt>NEXT OF KIN</dt><dd>${esc(e.kin)}</dd>
       <dt>WRISTBAND</dt><dd>${esc(e.wristband)}</dd>
       <dt>PHOTO</dt><dd>${esc(e.photoMark)}</dd>
+      ${e.alive ? '' : '<dt>STATUS</dt><dd>DECEASED</dd>'}
       ${e.note ? `<dt>NOTES</dt><dd>${esc(e.note)}</dd>` : ''}`;
     el.classList.remove('off');
   }

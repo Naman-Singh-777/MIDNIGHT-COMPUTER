@@ -19,7 +19,7 @@ const SLIPS: Slip[] = [
   { name: 'TULLY, Edmund', date: '01/10/1963', note: 'Ward A. Refused soup.', drawer: 2 },
   { name: 'HARGREAVE, Clem', date: '02/10/1963', note: 'Discharged to family.', drawer: 0 },
   { name: 'KELL, Oonagh', date: '03/10/1963', note: 'Ward B. Counts the beds out loud.', drawer: 1 },
-  { name: 'WREN, ______', date: 'TONIGHT, 22:00', note: 'Ward B, bed 10. Night officer.', drawer: 2 },
+  { name: 'WREN, ______', date: 'TONIGHT, 22:00', note: 'Ward B, bed 10. Night officer. Treatment: memory.', drawer: 2 },
 ];
 
 export class FilingGame {

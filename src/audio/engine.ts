@@ -766,6 +766,17 @@ export class AudioEngine {
     this.duck = Math.max(this.duck, 3);
   }
 
+  /** A short squeak, a rat or a hinge. */
+  tone2(freq: number, dur: number): void {
+    this.tone(freq, dur, 0.06, 'triangle', null, freq * 1.3);
+  }
+
+  /** A pipe letting go: a long hiss with a knock at the start. */
+  hiss(pos: V3): void {
+    if (!this.ctx) return;
+    this.noiseHit(5000, 2.2, 0.08, 0.05, pos, 'highpass');
+  }
+
   scrub(): void {
     if (!this.ctx) return;
     this.noiseHit(700 + Math.random() * 500, 0.22, 0.07, 0.05, null, 'bandpass');

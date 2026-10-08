@@ -155,6 +155,9 @@ export type SimEvents = {
   stalker: { event: import('./stalker').StalkerEvent };
   breach: { phase: 'crack' | 'inside' | 'over' };
   death: { cause: DeathCause };
+  fear: { event: import('./fear').FearEvent; real: boolean };
+  dawn: { phase: 'start' | 'figure' };
+  choice: { id: 'report_count' };
 };
 
 export interface ShiftScore {

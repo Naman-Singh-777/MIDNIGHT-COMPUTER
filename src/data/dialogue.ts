@@ -76,7 +76,7 @@ const ENDINGS: Record<string, [string, string]> = {
   ],
   taken: [
     'There you are',
-    'Bed 9 is made, the blanket folded into a square. Behind you in the corridor someone says your name in her voice. She has not said your name since spring. It says it again, a little better.',
+    'Bed 9 is made, the blanket folded into a square. Behind you in the corridor someone says your name in her voice. It is made of everything they took out of her, and the part of her that knew you was the biggest part. It says your name again, a little better.',
   ],
   absent: [
     'You never went',

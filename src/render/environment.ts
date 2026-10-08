@@ -6,7 +6,7 @@ import { Rain } from './rain';
 import { buildDesk } from './desk';
 
 export interface Interact {
-  id: 'door' | 'lever' | 'breaker' | 'chair' | 'phone' | 'prop' | 'stain' | 'cabinet' | 'wardslot';
+  id: 'door' | 'lever' | 'breaker' | 'chair' | 'phone' | 'prop' | 'stain' | 'cabinet' | 'wardslot' | 'photo';
   prompt: string;
   range: number;
 }
@@ -46,6 +46,7 @@ export interface Env {
   breakerLever: THREE.Group;
   breakerLamp: THREE.Mesh;
   phoneLed: THREE.Mesh;
+  desk: import('./desk').Desk;
   figure: THREE.Mesh;
   rainHall: Rain;
   rainYard: Rain;
@@ -179,7 +180,8 @@ export function buildEnvironment(physics: Physics): Env {
   scene.add(flash);
 
   // the desk and everything on it
-  const { lampBulb, crt, crtScreen, slip, slipMesh, phoneLed } = buildDesk(scene, physics, mats);
+  const desk = buildDesk(scene, physics, mats);
+  const { lampBulb, crt, crtScreen, slip, slipMesh, phoneLed } = desk;
 
   // containment lever (east wall, inside booth)
   const leverBase = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.3, 0.22), mats.metal);
@@ -355,7 +357,7 @@ export function buildEnvironment(physics: Physics): Env {
   addBoxProp(mats.woodDark, 0.5, 0.4, 0.5, 8.8, 0.65, 0.55, 5, 'Crate');
   addBoxProp(mats.rust, 0.3, 0.3, 0.3, 12.2, 0.2, 1.4, 2, 'Tin box');
 
-  const interactables: THREE.Object3D[] = [leverHit, chairHit, doorHit, breakerHit, ...props.map((p) => p.mesh)];
+  const interactables: THREE.Object3D[] = [leverHit, chairHit, doorHit, breakerHit, ...props.map((p) => p.mesh), ...desk.hits];
 
   // ---------------------------------------------------------------- floor collider (big, thick)
   physics.addStaticBox(5, -0.5, -2, 14, 0.5, 9);
@@ -380,6 +382,7 @@ export function buildEnvironment(physics: Physics): Env {
     breakerLever,
     breakerLamp,
     phoneLed,
+    desk,
     figure,
     rainHall,
     rainYard,

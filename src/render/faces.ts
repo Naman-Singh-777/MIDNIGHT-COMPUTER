@@ -22,7 +22,20 @@ export interface FaceLook {
   lipstick?: boolean;
   moustache?: boolean;
   grime?: number;
+  /** Real eyeballs sit in the sockets, so the texture paints only lids, lashes and shadow. */
+  realEyes?: boolean;
 }
+
+/** Bone structure per person. 0 is average. Small numbers, around -1 to 1. */
+export interface FaceShape {
+  jaw: number; // wide (+) or narrow (-)
+  chin: number;
+  cheek: number;
+  brow: number;
+  sunken: number; // eye sockets
+  asym: number; // left/right difference
+}
+export const AVERAGE_FACE: FaceShape = { jaw: 0, chin: 0, cheek: 0, brow: 0, sunken: 0, asym: 0 };
 
 const S = 4; // canvas pixels per face unit
 
@@ -174,6 +187,16 @@ export function drawFace(look: FaceLook, p: Patient, stage: number, state: FaceS
       g.moveTo(cx - 3, y + 11);
       g.bezierCurveTo(cx - 4, y + 22, cx - 1, y + 30, cx - 3, y + 44);
       g.stroke();
+      return;
+    }
+    if (look.realEyes) {
+      // the opening is dark and wet; the eyeball mesh sits in it. Paint the creases around it.
+      g.fillStyle = '#2a1410';
+      g.beginPath();
+      g.ellipse(cx, y + 0.5, 11.5 * eyeScale, 6.8 * eyeScale, 0, 0, 7);
+      g.fill();
+      curve(g, [cx - 13, y - 4, cx, y - 15, cx + 13, y - 4.5], 'rgba(70,34,28,0.45)', 0.7);
+      curve(g, [cx - 10, y + 7, cx, y + 11 + look.age / 25, cx + 10, y + 6.5], 'rgba(80,40,36,0.3)', 0.7);
       return;
     }
     if (state === 'blink') {
@@ -478,22 +501,22 @@ export function drawFace(look: FaceLook, p: Patient, stage: number, state: FaceS
 }
 
 /** Push a sphere around so it has a skull underneath: sockets, brow, cheekbones, a jaw that narrows. */
-export function sculptHead(geo: THREE.BufferGeometry, female: boolean): void {
+export function sculptHead(geo: THREE.BufferGeometry, female: boolean, f: FaceShape = AVERAGE_FACE): void {
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const v = new THREE.Vector3();
   const d = new THREE.Vector3();
   const bumps: [number, number, number, number, number][] = [
     // x, y, z (unit direction), amount, width
-    [-0.274, 0.13, 0.952, -0.075, 0.15],
-    [0.274, 0.13, 0.952, -0.075, 0.15],
-    [-0.26, 0.36, 0.9, female ? 0.02 : 0.04, 0.13],
-    [0.26, 0.36, 0.9, female ? 0.02 : 0.04, 0.13],
-    [-0.45, -0.08, 0.89, 0.035, 0.15],
-    [0.45, -0.08, 0.89, 0.035, 0.15],
-    [-0.42, -0.32, 0.85, -0.03, 0.14],
-    [0.42, -0.32, 0.85, -0.03, 0.14],
+    [-0.274, 0.13, 0.952, -0.075 - f.sunken * 0.02, 0.15],
+    [0.274, 0.13, 0.952, -0.075 - f.sunken * 0.02 * (1 + f.asym), 0.15],
+    [-0.26, 0.36, 0.9, (female ? 0.02 : 0.04) + f.brow * 0.02, 0.13],
+    [0.26, 0.36, 0.9, (female ? 0.02 : 0.04) + f.brow * 0.02, 0.13],
+    [-0.45, -0.08, 0.89, 0.035 + f.cheek * 0.02, 0.15],
+    [0.45, -0.08, 0.89, (0.035 + f.cheek * 0.02) * (1 - f.asym * 0.5), 0.15],
+    [-0.42, -0.32, 0.85, -0.03 - f.cheek * 0.01, 0.14],
+    [0.42, -0.32, 0.85, -0.03 - f.cheek * 0.01, 0.14],
     [0, -0.42, 0.9, 0.025, 0.16],
-    [0, -0.68, 0.73, female ? 0.02 : 0.04, 0.13],
+    [0, -0.68, 0.73, (female ? 0.02 : 0.04) + f.chin * 0.03, 0.13],
     [-0.75, 0.25, 0.6, -0.03, 0.2],
     [0.75, 0.25, 0.6, -0.03, 0.2],
   ];
@@ -508,50 +531,149 @@ export function sculptHead(geo: THREE.BufferGeometry, female: boolean): void {
       k += amt * Math.exp(-(dx * dx + dy * dy + dz * dz) / (w * w));
     }
     v.copy(d).multiplyScalar(len * k);
-    if (d.y < -0.2) v.x *= 1 - (female ? 0.22 : 0.15) * Math.min(1, (-d.y - 0.2) / 0.6);
+    if (d.y < -0.2) v.x *= 1 - ((female ? 0.22 : 0.15) - f.jaw * 0.08) * Math.min(1, (-d.y - 0.2) / 0.6);
+    // a jaw with an underside: flatten the bottom of the sphere into a plane that runs back to the neck,
+    // so the chin and the angle of the jaw read as edges instead of the bottom of an egg
+    if (d.y < -0.5) v.y += (-0.6 * len * k - v.y) * 0.55;
+    if (d.y < -0.35 && d.z < 0.1) v.z *= 0.82; // the nape tucks in above the neck
+    if (d.y < -0.45 && d.z > 0.5) v.z += 0.01 * (1 + f.chin); // chin forward
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   pos.needsUpdate = true;
   geo.computeVertexNormals();
 }
 
-let fabric: THREE.CanvasTexture | null = null;
-/** Shared wool texture: weave, pilling, rain darkening, long folds. Tinted by the material colour. */
-export function fabricTexture(): THREE.CanvasTexture {
-  if (fabric) return fabric;
+export type FabricKind = 'wool' | 'cotton' | 'knit' | 'oilcloth' | 'leather';
+const fabrics: Partial<Record<FabricKind, THREE.CanvasTexture>> = {};
+/** Shared cloth textures, tinted by the material colour. Each fabric reads differently up close. */
+export function fabricTexture(kind: FabricKind = 'wool'): THREE.CanvasTexture {
+  const hit = fabrics[kind];
+  if (hit) return hit;
   const c = document.createElement('canvas');
   c.width = c.height = 256;
   const g = c.getContext('2d')!;
+  const n = new Rng(4242 + kind.length * 97);
   g.fillStyle = '#c8c8c8';
   g.fillRect(0, 0, 256, 256);
-  const n = new Rng(4242);
-  for (let y = 0; y < 256; y += 2) {
-    for (let x = 0; x < 256; x += 2) {
-      const v = 175 + ((x + y) % 4 === 0 ? 22 : -10) + n.int(-18, 18);
-      g.fillStyle = `rgb(${v},${v},${v})`;
-      g.fillRect(x, y, 2, 2);
+  const px = (x: number, y: number, v: number, s = 2): void => {
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    g.fillRect(x, y, s, s);
+  };
+  if (kind === 'wool') {
+    for (let y = 0; y < 256; y += 2) for (let x = 0; x < 256; x += 2) px(x, y, 175 + ((x + y) % 4 === 0 ? 22 : -10) + n.int(-18, 18));
+  } else if (kind === 'cotton') {
+    for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x += 1) if ((x + y) % 2 === 0) px(x, y, 205 + n.int(-8, 8), 1);
+  } else if (kind === 'knit') {
+    // ribbed columns of V stitches
+    for (let x = 0; x < 256; x += 8)
+      for (let y = 0; y < 256; y += 6) {
+        g.fillStyle = `rgb(${150 + n.int(-12, 12)},${150},${150})`;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + 4, y + 6);
+        g.lineTo(x + 8, y);
+        g.lineTo(x + 4, y + 3);
+        g.fill();
+      }
+  } else if (kind === 'oilcloth') {
+    g.fillStyle = '#d6d6d6';
+    g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 40; i++) {
+      g.strokeStyle = `rgba(255,255,255,${n.range(0.05, 0.15)})`;
+      g.lineWidth = n.range(1, 4);
+      const x = n.range(0, 256);
+      g.beginPath();
+      g.moveTo(x, 0);
+      g.lineTo(x + n.range(-20, 20), 256);
+      g.stroke();
+    }
+  } else {
+    // leather: creases and scuffs
+    for (let i = 0; i < 3000; i++) px(n.range(0, 256), n.range(0, 256), 160 + n.int(-30, 30), 2);
+    g.strokeStyle = 'rgba(40,40,40,0.35)';
+    for (let i = 0; i < 60; i++) {
+      g.lineWidth = n.range(0.5, 1.5);
+      const x = n.range(0, 256), y = n.range(0, 256);
+      g.beginPath();
+      g.moveTo(x, y);
+      g.quadraticCurveTo(x + n.range(-20, 20), y + n.range(-6, 6), x + n.range(-40, 40), y + n.range(-10, 10));
+      g.stroke();
     }
   }
-  for (let i = 0; i < 14; i++) {
-    const x = n.range(0, 256);
-    const gr = g.createLinearGradient(x - 10, 0, x + 10, 0);
-    gr.addColorStop(0, 'rgba(0,0,0,0)');
-    gr.addColorStop(0.5, `rgba(0,0,0,${n.range(0.15, 0.35)})`);
-    gr.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = gr;
-    g.fillRect(x - 10, 0, 20, 256);
+  if (kind !== 'oilcloth') {
+    // folds that hang with gravity, and rain darkening
+    for (let i = 0; i < 14; i++) {
+      const x = n.range(0, 256);
+      const gr = g.createLinearGradient(x - 10, 0, x + 10, 0);
+      gr.addColorStop(0, 'rgba(0,0,0,0)');
+      gr.addColorStop(0.5, `rgba(0,0,0,${n.range(0.12, 0.3)})`);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.fillRect(x - 10, 0, 20, 256);
+    }
   }
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 24; i++) {
     const x = n.range(0, 256), y = n.range(0, 256), r = n.range(10, 40);
     const gr = g.createRadialGradient(x, y, 0, x, y, r);
-    gr.addColorStop(0, 'rgba(20,24,30,0.22)');
+    gr.addColorStop(0, 'rgba(20,24,30,0.2)');
     gr.addColorStop(1, 'rgba(20,24,30,0)');
     g.fillStyle = gr;
     g.fillRect(x - r, y - r, r * 2, r * 2);
   }
-  fabric = new THREE.CanvasTexture(c);
-  fabric.colorSpace = THREE.SRGBColorSpace;
-  fabric.wrapS = fabric.wrapT = THREE.RepeatWrapping;
-  fabric.repeat.set(3, 3);
-  return fabric;
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 3);
+  fabrics[kind] = t;
+  return t;
+}
+
+const eyeCache = new Map<string, THREE.CanvasTexture>();
+/** An eyeball texture: sclera with veins, iris with threads and a dark rim, pupil. Iris faces +z on a SphereGeometry. */
+export function eyeTexture(iris: string, fake: boolean): THREE.CanvasTexture {
+  const key = iris + fake;
+  const hit = eyeCache.get(key);
+  if (hit) return hit;
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = fake ? '#e9e9e4' : '#e6dccd';
+  g.fillRect(0, 0, 256, 128);
+  if (!fake) {
+    g.strokeStyle = 'rgba(170,45,45,0.4)';
+    g.lineWidth = 0.6;
+    for (let i = 0; i < 26; i++) {
+      const x = 64 + (Math.random() - 0.5) * 120;
+      const y = 64 + (Math.random() - 0.5) * 90;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.quadraticCurveTo(x + (Math.random() - 0.5) * 20, y + (Math.random() - 0.5) * 20, 64 + (x - 64) * 0.4, 64 + (y - 64) * 0.4);
+      g.stroke();
+    }
+  }
+  const cx = 64, cy = 64;
+  const ir = g.createRadialGradient(cx, cy, 2, cx, cy, 19);
+  ir.addColorStop(0, iris);
+  ir.addColorStop(0.8, iris);
+  ir.addColorStop(1, '#0c0907');
+  g.fillStyle = ir;
+  g.beginPath();
+  g.ellipse(cx, cy, 19, 19, 0, 0, 7);
+  g.fill();
+  g.strokeStyle = 'rgba(255,240,210,0.18)';
+  for (let a = 0; a < 6.28; a += 0.2) {
+    g.beginPath();
+    g.moveTo(cx + Math.cos(a) * 6, cy + Math.sin(a) * 6);
+    g.lineTo(cx + Math.cos(a + 0.08) * 17, cy + Math.sin(a + 0.08) * 17);
+    g.stroke();
+  }
+  g.fillStyle = '#040303';
+  g.beginPath();
+  g.arc(cx, cy, fake ? 3 : 7.5, 0, 7);
+  g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  eyeCache.set(key, t);
+  return t;
 }

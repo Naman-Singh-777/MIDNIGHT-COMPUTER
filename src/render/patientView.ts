@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Patient, Verdict } from '../sim/types';
-import { drawFace, sculptHead, type FaceLook, type FaceState } from './faces';
+import { AVERAGE_FACE, drawFace, eyeTexture, sculptHead, type FaceLook, type FaceState } from './faces';
 import { buildBody, type Rig } from './humanoid';
 import { lookFor, type Look } from './looks';
 
@@ -21,11 +21,11 @@ const puffTex = (() => {
 export type ViewPhase = 'none' | 'approaching' | 'present' | 'leaving';
 type ArmPose = { sh: number; el: number; out: number };
 const POSES: Record<string, ArmPose> = {
-  rest: { sh: 0.06, el: -0.12, out: 0.08 },
+  rest: { sh: 0.06, el: -0.14, out: 0.13 },
   hold: { sh: -0.35, el: -1.0, out: -0.12 },
   hug: { sh: -0.45, el: -1.1, out: -0.3 },
   folded: { sh: -0.15, el: -1.25, out: -0.42 },
-  bag: { sh: 0.04, el: -0.08, out: 0.12 },
+  bag: { sh: 0.04, el: -0.1, out: 0.16 },
   glass: { sh: -1.5, el: -0.12, out: -0.1 },
 };
 
@@ -65,6 +65,11 @@ export class PatientView {
   private lurk = false;
   private breach: 'crack' | 'inside' | null = null;
   private mouthY = 1.5;
+  private eyes: { ball: THREE.Mesh; lid: THREE.Mesh; aim: THREE.Quaternion }[] = [];
+  private lidOpen = -0.35;
+  private saccadeT = 1;
+  private saccade = new THREE.Vector3();
+  private lookAway = 0;
   private press = 0;
   /** Set by the game for a few frames when a fake shows what it is. */
   revealing = 0;
@@ -109,6 +114,7 @@ export class PatientView {
     if (this.body) this.group.remove(this.body.root);
     this.body = null;
     this.head = new THREE.Group();
+    this.eyes = [];
     if (this.faces) for (const k of Object.keys(this.faces) as FaceState[]) this.faces[k].dispose();
     this.faces = null;
     this.faceMat = null;
@@ -149,7 +155,7 @@ export class PatientView {
         barefoot: look.barefoot,
         armLength: fake && stage >= 3 ? 1.12 : 1,
       },
-      { mat: (c, m) => this.mat(c, m ?? null), mesh: this.mesh },
+      { mat: (c, m) => this.mat(c, m ?? null), mesh: this.mesh, own: (x) => this.owned.push(x) },
     );
     this.group.add(this.body.root);
     this.buildHead(look, p, skin);
@@ -163,14 +169,15 @@ export class PatientView {
 
   private buildHead(look: Look, p: Patient, skin: THREE.Color): void {
     const head = this.head;
-    head.position.y = 0.11;
+    head.position.y = 0.075;
     head.scale.setScalar(HEAD_SCALE);
     this.body!.headMount.add(head);
     const skinMat = this.mat(skin);
     const hair = this.mat(look.hairColor);
     const sx = look.female ? 0.88 : 0.95;
+    const shape = { ...AVERAGE_FACE, ...look.face };
     const skullGeo = new THREE.SphereGeometry(0.14, 48, 36);
-    sculptHead(skullGeo, look.female);
+    sculptHead(skullGeo, look.female, shape);
     this.mesh(skullGeo, skinMat, head).scale.set(sx, 1.14, 0.98);
     const fl: FaceLook = {
       female: look.female,
@@ -184,6 +191,7 @@ export class PatientView {
       lipstick: look.lipstick,
       moustache: look.facial === 'moustache',
       grime: look.grime,
+      realEyes: true,
     };
     this.faces = {
       open: drawFace(fl, p, this.stage, 'open'),
@@ -195,15 +203,37 @@ export class PatientView {
     this.faceMat = new THREE.MeshLambertMaterial({ map: this.faces.open, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     this.owned.push(this.faceMat);
     const patchGeo = new THREE.SphereGeometry(0.1425, 48, 36, 0.57, 2.0, 0.55, 1.9);
-    sculptHead(patchGeo, look.female);
+    sculptHead(patchGeo, look.female, shape);
     const patch = this.mesh(patchGeo, this.faceMat, head);
     patch.scale.set(sx, 1.14, 0.98);
     this.shown = 'open';
+    // real eyeballs in the sockets, with an upper lid that blinks and widens
+    const fake = p.truth === 'understudy';
+    const ballMat = new THREE.MeshStandardMaterial({ map: eyeTexture(look.eye, fake), roughness: 0.12, metalness: 0 });
+    this.owned.push(ballMat);
+    for (const sd of [-1, 1]) {
+      const d = new THREE.Vector3(sd * 0.274, 0.13, 0.952).normalize();
+      const r = 0.1425 * (0.925 - (shape.sunken ?? 0) * 0.02) - 0.006;
+      const pos = d.multiplyScalar(r);
+      const holder = new THREE.Group();
+      holder.position.set(pos.x * sx, pos.y * 1.14, pos.z * 0.98);
+      head.add(holder);
+      const ball = this.mesh(new THREE.SphereGeometry(0.0165, 20, 14), ballMat, holder);
+      ball.castShadow = false;
+      const lid = this.mesh(new THREE.SphereGeometry(0.0178, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), skinMat, holder);
+      lid.castShadow = false;
+      const low = this.mesh(new THREE.SphereGeometry(0.0176, 18, 6, 0, Math.PI * 2, Math.PI * 0.62, Math.PI * 0.38), skinMat, holder);
+      low.castShadow = false;
+      this.eyes.push({ ball, lid, aim: new THREE.Quaternion() });
+    }
     // nose: a bridge and a tip, a little big, the way a caricature wants it
-    const bridge = this.mesh(new THREE.CylinderGeometry(0.009, 0.017, 0.05, 8), skinMat, head, 0, -0.005, 0.138);
-    bridge.rotation.x = -0.35;
-    const tip = this.mesh(new THREE.SphereGeometry(0.022, 10, 8), skinMat, head, 0, -0.028, 0.148);
-    tip.scale.set(p.castId === 'bernard' || p.castId === 'ivor' || p.castId === 'gus' ? 1.35 : 1, 0.9, 0.95);
+    const ns = look.nose ?? 1;
+    const bridge = this.mesh(new THREE.CylinderGeometry(0.008, 0.015 * ns, 0.055, 10), skinMat, head, 0, -0.006, 0.137);
+    bridge.rotation.x = -0.4;
+    bridge.scale.z = 0.8;
+    for (const sd of [-1, 1]) this.mesh(new THREE.SphereGeometry(0.0095 * ns, 10, 8), skinMat, head, sd * 0.012 * ns, -0.034, 0.138).scale.set(1, 0.8, 0.9); // nostril wings
+    const tip = this.mesh(new THREE.SphereGeometry(0.0155, 12, 10), skinMat, head, 0, -0.03, 0.15);
+    tip.scale.set(look.nose ?? 1, 0.9 * (look.nose ?? 1) ** 0.5, 0.95);
     for (const sd of [-1, 1]) {
       const ear = this.mesh(new THREE.SphereGeometry(0.032, 10, 8), skinMat, head, sd * 0.137 * sx, -0.004, -0.01);
       ear.scale.set(0.38, 1.05, 0.72);
@@ -218,20 +248,20 @@ export class PatientView {
     };
     switch (look.hair) {
       case 'short':
-        cap(0.148, 1.15, -0.4);
+        cap(0.148, 1.22, -0.18);
         break;
       case 'slick':
-        cap(0.147, 1.1, -0.5);
+        cap(0.147, 1.2, -0.22);
         break;
       case 'bald':
         cap(0.146, 0.5, -1.4, 0.0).scale.multiplyScalar(1.01);
         break;
       case 'bun':
-        cap(0.148, 1.2, -0.3);
+        cap(0.148, 1.24, -0.16);
         this.mesh(new THREE.SphereGeometry(0.058, 12, 10), hair, head, 0, 0.07, -0.135);
         break;
       case 'curls': {
-        cap(0.15, 1.3, -0.25);
+        cap(0.15, 1.32, -0.14);
         for (let i = 0; i < 16; i++) {
           const a = (i / 16) * Math.PI * 2;
           const c = this.mesh(new THREE.SphereGeometry(0.035, 8, 6), hair, head, Math.cos(a) * 0.12 * sx, 0.04 + Math.sin(i * 1.7) * 0.03, Math.sin(a) * 0.12 - 0.02);
@@ -240,7 +270,7 @@ export class PatientView {
         break;
       }
       case 'long': {
-        cap(0.149, 1.25, -0.3);
+        cap(0.149, 1.28, -0.16);
         const back = this.mesh(new THREE.CylinderGeometry(0.128, 0.105, 0.34, 16, 1, true), hair, head, 0, -0.1, -0.05);
         (back.material as THREE.MeshLambertMaterial).side = THREE.DoubleSide;
         for (const x of [-0.06, -0.02, 0.03, 0.065]) this.mesh(new THREE.BoxGeometry(0.014, 0.08, 0.008), hair, head, x, 0.075, 0.13).rotation.z = x * 3;
@@ -386,7 +416,48 @@ export class PatientView {
     else this.to.copy(this.group.position);
   }
 
+  /**
+   * Eyes. People look at you, glance at the form, look back, with small darting moves.
+   * Fakes break the rules: the eyes lock on before the head turns, the right eye trails the left,
+   * and from stage 3 they stop blinking and stop moving at all until you look away.
+   */
+  private updateEyes(dt: number, cam: THREE.Vector3, fake: boolean, hidden: boolean, blink: boolean): void {
+    if (!this.eyes.length) return;
+    this.saccadeT -= dt;
+    if (this.saccadeT <= 0) {
+      this.saccadeT = fake ? 3 + Math.random() * 4 : 0.4 + Math.random() * 1.6;
+      this.saccade.set((Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.05, 0);
+      if (!fake && Math.random() < 0.18) this.lookAway = 0.9; // glance down at their papers
+    }
+    this.lookAway = Math.max(0, this.lookAway - dt);
+    const target = cam.clone();
+    if (this.lookAway > 0) target.y -= 1.2;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const wp = new THREE.Vector3();
+    const parentQ = new THREE.Quaternion();
+    this.eyes.forEach((e, i) => {
+      e.ball.visible = !hidden;
+      e.lid.visible = !hidden;
+      const holder = e.ball.parent!;
+      holder.getWorldPosition(wp);
+      holder.getWorldQuaternion(parentQ);
+      const t = target.clone().add(fake ? new THREE.Vector3() : this.saccade);
+      m.lookAt(t, wp, new THREE.Vector3(0, 1, 0));
+      q.setFromRotationMatrix(m);
+      q.premultiply(parentQ.invert());
+      const frozen = fake && this.stage >= 3 && !this.stare && Math.sin(this.t * 0.3 + i) > 0.2;
+      const speed = fake ? (i === 1 ? 2.2 : 30) : 14;
+      if (!frozen) e.aim.slerp(q, Math.min(1, dt * speed));
+      e.ball.quaternion.copy(e.aim);
+    });
+    const want = blink ? 1.45 : this.stare ? -0.65 : fake ? -0.5 : -0.32;
+    this.lidOpen += (want - this.lidOpen) * Math.min(1, dt * (blink ? 30 : 8));
+    for (const e of this.eyes) e.lid.rotation.x = this.lidOpen;
+  }
+
   private setFace(s: FaceState): void {
+    if (s === 'blink') s = 'open'; // real lids do the blinking now
     if (!this.faceMat || !this.faces || s === this.shown) return;
     this.faceMat.map = this.faces[s];
     this.shown = s;
@@ -399,7 +470,9 @@ export class PatientView {
     a.sh.rotation.x = p.sh + swing + fidget;
     a.sh.rotation.z = side * p.out;
     a.el.rotation.x = p.el - Math.abs(swing) * 0.3 - fidget * 0.5;
-    for (const f of a.fingers) f.rotation.x = p.el < -1 ? -0.9 : -0.25;
+    const curl = p.el < -0.9 ? -0.8 : p.sh < -1.2 ? -0.05 : -0.25;
+    for (const f of a.fingers) f.rotation.x = curl;
+    for (const t of a.tips) t.rotation.x = curl * 0.8;
   }
 
   update(dt: number, phase: ViewPhase, cam: THREE.Vector3, quiet: boolean): void {
@@ -470,7 +543,10 @@ export class PatientView {
     }
     b.pelvis.position.y = 0.95 * b.scaleY + (walking ? Math.abs(Math.sin(this.walkPh)) * (fake ? 0.008 : 0.025) : 0);
     b.chest.rotation.x = look.hunch * 0.35 + leanFwd + (fake && !walking ? -0.02 : 0);
-    if (b.skirt) b.skirt.rotation.x = walking ? Math.sin(this.walkPh * 2) * 0.03 : 0;
+    if (b.skirt) {
+      b.skirt.rotation.x = walking ? Math.sin(this.walkPh * 2) * 0.03 : 0;
+      b.skirt.scale.set(1 + walking * 0.14, 1, 0.8 * (1 + walking * 0.25)); // the hem swings out over the knees
+    }
 
     // breathing and weight shifts. The fake does neither.
     const breathe = fake ? 0 : Math.sin(this.t * 1.6 + p.hue * 4) * 0.012;
@@ -535,6 +611,7 @@ export class PatientView {
       }
     }
     this.setFace(face);
+    this.updateEyes(dt, cam, fake, face === 'reveal', this.blinkT > 0);
 
     // breath on the cold air. Fakes do not breathe.
     const breath = !p.tells.includes('no_breath') && !quiet && !fake;

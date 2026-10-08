@@ -8,7 +8,7 @@
  *  - It kills on contact while hunting. Walking into it while it roams also kills, so give it the wall.
  * Pure logic. No DOM, no Three.js.
  */
-export type StalkerMode = 'off' | 'roam' | 'listen' | 'hunt' | 'door' | 'leave';
+export type StalkerMode = 'off' | 'roam' | 'listen' | 'hunt' | 'search' | 'door' | 'leave';
 export type StalkerEvent = 'growl' | 'shriek' | 'bang' | 'kill' | 'lost' | 'appear' | 'gone';
 
 export interface StalkerInput {
@@ -36,8 +36,18 @@ export class Stalker {
   private life = 0; // seconds until it leaves on its own (Infinity for until-told)
   private timer = 0;
   private bangs = 0;
-  /** Extra hunting speed. Every Understudy you let through makes it quicker. */
+  /** Extra hunting speed. Every fake you let through makes it quicker. */
   rage = 0;
+  /** It learns: every time you made it hunt, it listens harder and walks faster. */
+  provoked = 0;
+  private minX = CORRIDOR_MIN_X;
+  private maxX = CORRIDOR_MAX_X;
+
+  /** Keep it pacing between two points (the dawn walk: it walks back and forth past the Ward B door). */
+  patrol(minX: number, maxX: number): void {
+    this.minX = minX;
+    this.maxX = maxX;
+  }
 
   get active(): boolean {
     return this.mode !== 'off';
@@ -49,6 +59,7 @@ export class Stalker {
     this.x = Math.min(CORRIDOR_MAX_X, Math.max(CORRIDOR_MIN_X, x));
     this.z = MID_Z;
     this.mode = this.mode === 'off' || this.mode === 'leave' ? 'roam' : this.mode;
+    if (fresh) this.patrol(CORRIDOR_MIN_X, CORRIDOR_MAX_X);
     this.life = Math.max(fresh ? 0 : this.life, life);
     this.sus = fresh ? 0 : this.sus;
     return fresh ? ['appear'] : [];
@@ -83,11 +94,12 @@ export class Stalker {
     const speed = (s: number): number => s * dt;
     switch (this.mode) {
       case 'roam': {
-        this.x += speed(0.75) * this.dir;
+        this.x += speed(0.75 + this.provoked * 0.12) * this.dir;
         this.z += (MID_Z - this.z) * Math.min(1, dt);
-        if (this.x < CORRIDOR_MIN_X + 0.2) this.dir = 1;
-        if (this.x > CORRIDOR_MAX_X - 0.2) this.dir = -1;
-        if (this.sus > 0.4) {
+        if (this.x < this.minX + 0.2) this.dir = 1;
+        if (this.x > this.maxX - 0.2) this.dir = -1;
+        if (this.x > this.maxX + 0.5) this.dir = -1;
+        if (this.sus > Math.max(0.22, 0.4 - this.provoked * 0.06)) {
           this.mode = 'listen';
           this.timer = 0;
           ev.push('growl');
@@ -98,6 +110,7 @@ export class Stalker {
         this.timer += dt;
         if (this.sus > 1) {
           this.mode = 'hunt';
+          this.provoked++;
           ev.push('shriek');
         } else if (this.sus < 0.15 && this.timer > 2) this.mode = 'roam';
         break;
@@ -121,6 +134,19 @@ export class Stalker {
         }
         this.x = Math.max(p.inBooth && !p.doorClosed ? -1.5 : CORRIDOR_MIN_X, Math.min(CORRIDOR_MAX_X, this.x));
         if (td < 0.3 && this.sus < 0.6) {
+          // it does not give up straight away: it sweeps the spot, head down, for a few seconds
+          this.mode = 'search';
+          this.timer = 0;
+        }
+        break;
+      }
+      case 'search': {
+        this.timer += dt;
+        this.x = this.heardX + Math.sin(this.timer * 0.9) * 1.6;
+        this.z = MID_Z + Math.sin(this.timer * 1.7) * 0.5;
+        this.x = Math.max(CORRIDOR_MIN_X, Math.min(CORRIDOR_MAX_X, this.x));
+        if (this.sus > 1) this.mode = 'hunt';
+        else if (this.timer > 7) {
           this.mode = 'roam';
           ev.push('lost');
         }
@@ -136,7 +162,8 @@ export class Stalker {
           this.mode = 'hunt';
           this.heardX = p.x;
           this.heardZ = p.z;
-        } else if (this.timer > 7) {
+        } else if (this.timer > 12) {
+          // it bangs, then goes quiet and waits outside before it gives up
           this.sus = 0;
           this.mode = 'roam';
           this.dir = 1;
@@ -155,7 +182,7 @@ export class Stalker {
     }
 
     // contact
-    const reach = this.mode === 'hunt' ? 0.75 : this.mode === 'roam' || this.mode === 'listen' ? 0.42 : 0;
+    const reach = this.mode === 'hunt' ? 0.75 : this.mode === 'roam' || this.mode === 'listen' || this.mode === 'search' ? 0.42 : 0;
     const nd = Math.hypot(p.x - this.x, p.z - this.z);
     const sameSide = p.inBooth === this.x < 1.9;
     if (reach > 0 && nd < reach && sameSide) ev.push('kill');

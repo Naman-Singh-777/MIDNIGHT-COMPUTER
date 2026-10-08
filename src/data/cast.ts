@@ -16,6 +16,8 @@ export interface CastMember {
   voice: { pitch: number; rate: number };
   note?: string; // registry note
   typo?: boolean; // the form has a harmless mistake
+  dead?: boolean; // the records say this person died
+  bye?: string; // what they say as you let them through
 }
 
 export const CAST: CastMember[] = [
@@ -30,9 +32,10 @@ export const CAST: CastMember[] = [
       dob: "{dob}. Sorry. I had to think about it.",
       sender: '{sender}. Nice man. Cold hands.',
       kin: "{kin}. She won't come. Put her down anyway.",
-      memory: 'The bus stopped at the bottom of the hill and nobody got off but me.',
+      memory: "Forty years of letters. Some houses never answered. You keep knocking anyway. That's the job.",
     },
     quirk: 'Retired postman. Soaked through. Holding a pair of pink slippers.',
+    bye: "Thank you. Mind the step, love. That's what June always said. Mind the step.",
     voice: { pitch: 98, rate: 0.9 },
   },
   {
@@ -49,6 +52,7 @@ export const CAST: CastMember[] = [
       memory: 'A fox walked right past us on the road. Marjorie was very brave about it.',
     },
     quirk: 'Hugs a cracked ceramic goose and introduces it as his sister.',
+    bye: 'Say goodnight to the officer, Marjorie. She says goodnight.',
     voice: { pitch: 132, rate: 1.08 },
   },
   {
@@ -65,6 +69,7 @@ export const CAST: CastMember[] = [
       memory: "There was a man standing in your yard in the rain. Very tall. No umbrella. Didn't seem to mind.",
     },
     quirk: 'Club singer. Smudged lipstick, fur collar, a voice like gravel.',
+    bye: "Save me a bed by the window, sweetheart. I like to see who's coming.",
     voice: { pitch: 168, rate: 0.95 },
   },
   {
@@ -81,6 +86,7 @@ export const CAST: CastMember[] = [
       memory: 'I counted the windows on the way up. There are more on the outside than the inside.',
     },
     quirk: 'Hums the same four notes. Stares. Means nothing by it. His form has a typo.',
+    bye: "Mm mm mm mm. Thank you. Don't let them count the windows.",
     voice: { pitch: 120, rate: 0.82 },
   },
   {
@@ -97,6 +103,7 @@ export const CAST: CastMember[] = [
       memory: "Something was walking behind me on the lane. Stopped when I stopped. Just the echo, I told myself. There's no echo on that lane.",
     },
     quirk: 'Coal miner with a wet cough. Talks to fill silence.',
+    bye: 'Ta. Keep your head down, boyo. I mean it.',
     voice: { pitch: 104, rate: 1.0 },
   },
   {
@@ -113,6 +120,7 @@ export const CAST: CastMember[] = [
       memory: "I knitted the cap in the hospital. I never finished the second one.",
     },
     quirk: 'Holds a small red knitted cap with both hands.',
+    bye: 'If you see a little boy in a red cap. No. Thank you. Thank you.',
     voice: { pitch: 176, rate: 0.84 },
     note: 'Next of kin: Daniel Calder, deceased 1958, aged 6.',
   },
@@ -146,6 +154,7 @@ export const CAST: CastMember[] = [
       memory: 'Your gate light is broken. I nearly walked into the fence.',
     },
     quirk: 'Agency night nurse. Impatient. Her form has a mistake on it and she knows.',
+    bye: "Right. Where's the sluice room. Never mind, I'll find it.",
     voice: { pitch: 182, rate: 1.12 },
     typo: true,
   },
@@ -179,6 +188,7 @@ export const CAST: CastMember[] = [
       memory: "It stood at the edge of the light and listened. When I ran, it turned its head. When I stood still, it didn't know where I was.",
     },
     quirk: 'Ex-boxer. Shaking. Keeps looking over his shoulder at the door.',
+    bye: 'Thank you. Lock it after me. Lock it.',
     voice: { pitch: 118, rate: 1.22 },
   },
   {
@@ -195,7 +205,60 @@ export const CAST: CastMember[] = [
       memory: "Lionel kissed me in the car and said ten minutes. He never says ten minutes. He says won't be long.",
     },
     quirk: "The doctor's wife. Pearls, good coat, hands that will not stay still.",
+    bye: "If you see Lionel, tell him I waited. Tell him I'm not cross.",
     voice: { pitch: 186, rate: 1.0 },
+  },
+  {
+    id: 'hester',
+    name: 'Hester Bloom',
+    female: true,
+    mark: 'a freckle under the left eye',
+    greet: "Don't mind me, dear. There's someone standing behind you. No, don't turn round. It's only listening.",
+    say: {
+      name: 'Hester Bloom. Mrs. Widowed, blind, and eighty one, in that order.',
+      dob: '{dob}. I was born in a thunderstorm. My mother said it explained a great deal.',
+      sender: '{sender}. He talks to me very slowly, as if blind meant deaf.',
+      kin: "{kin}. My nephew. He'll be cross I came out in this.",
+      memory: "Your corridor hums, dear. It hums lower when something walks in it. Listen for that.",
+    },
+    quirk: 'Blind. Milky eyes, a white cane, faces you exactly anyway.',
+    voice: { pitch: 160, rate: 0.82 },
+    bye: 'Goodnight, dear. Walk softly out there. Softly.',
+  },
+  {
+    id: 'hollis',
+    name: 'Abel Hollis',
+    female: false,
+    mark: 'a burn on the chin',
+    greet: "Hollis. Porter, Ward A. They sent me home with a cough and I came back. Let me through and I'll walk that corridor with you at six. Nobody should walk it alone.",
+    say: {
+      name: 'Abel Hollis. Porter. Twenty two years.',
+      dob: '{dob}.',
+      sender: "{sender}. Says I've got a chest. I've got a job, is what I've got.",
+      kin: "{kin}. Sister. She'll say I'm daft for coming back. She's right.",
+      memory: "Pell told me about the count. I don't count them. I just say goodnight to each one by name.",
+    },
+    quirk: 'Huge, scarred, frightening to look at. Gentle as anything.',
+    voice: { pitch: 92, rate: 0.85 },
+    bye: "I'll be on the ward. At six, I'll be at the door. Don't run to me. Walk.",
+  },
+  {
+    id: 'june',
+    name: 'June Quill',
+    female: true,
+    mark: 'a mole on the right cheek',
+    greet: "Is Walter here? He's got my slippers. Tell him I'm not cross. Mind the step, love.",
+    say: {
+      name: 'June Quill. Mrs. Walter Quill.',
+      dob: '{dob}.',
+      sender: '{sender}.',
+      kin: 'Walter. My Walter. He brought my slippers.',
+      memory: 'Walter always walks me to the door. He always says mind the step.',
+    },
+    quirk: "Walter's wife. Neat coat, pink slippers on her feet. Bone dry.",
+    voice: { pitch: 178, rate: 0.9 },
+    note: 'DIED 1961. Walter Quill, husband, informed.',
+    dead: true,
   },
 ];
 
@@ -203,5 +266,6 @@ export const CAST_BY_ID: Record<string, CastMember> = Object.fromEntries(CAST.ma
 
 /** Lines the fakes use when they copy someone. Close enough to pass. Not quite. */
 export const COPY_GREET: Record<string, string> = {
-  walter: "Evening. Sorry. I'm dripping all over your floor. I've brought June's slippers.",
+  // it heard Walter say goodbye, and it kept the part that mattered
+  walter: "Evening. Mind the step, love. That's what June always said. Mind the step. Mind the step.",
 };
