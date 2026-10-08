@@ -2,7 +2,7 @@
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 const out = process.argv[2] ?? '.work';
-const srv = spawn('npx', ['vite', 'preview', '--port', '4177', '--strictPort'], { stdio: 'ignore' });
+const srv = spawn('npx', ['vite', 'preview', '--port', '4177', '--strictPort'], { stdio: 'ignore', detached: true });
 await new Promise((r) => setTimeout(r, 2500));
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? '/opt/pw-browsers/chromium', args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
@@ -10,6 +10,7 @@ const errs = [];
 page.on('pageerror', (e) => errs.push(e.message));
 await page.goto('http://localhost:4177/?seed=3&autostart', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => !!window.__game, null, { timeout: 60000 });
+await page.waitForFunction(() => window.__game.view.humanReady, null, { timeout: 60000 }).catch(() => console.log('authored bodies did not load'));
 await page.evaluate(() => {
   const g = window.__game;
   g.running = false;
@@ -69,5 +70,5 @@ await shot('tall-one', () => {
   g.running = true;
 });
 await browser.close();
-srv.kill();
+process.kill(-srv.pid);
 console.log(errs.length ? 'ERRORS ' + errs.join(' | ') : 'ok');

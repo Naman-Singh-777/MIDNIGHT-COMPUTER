@@ -12,6 +12,10 @@ Commits: `3415bf3` round 1, `eb0c963` round 2, `b7d2d0e` roadmap, `91d1c9c` roun
 
 ---
 
+## Character pass (8 Oct 2026): authored bodies for the visitors
+
+Analysis first (`docs/generated/CHARACTER_ART_DIRECTION.md`): the sphere and lathe kit could not reach the reference, so the visitors moved to the CC0 MakeHuman body. `tools/mh-bake.mjs` bakes 20 bodies (16 named people, 4 stock) with their own age, build and face shapes into `public/characters/humans.bin`. `src/render/human.ts` turns one into a skinned body with clothes and hair grown from its surface, painted skin, real lids and expressions, fitted hats and glasses. `PatientView` uses it when loaded and keeps the old body as a fallback (`?procedural`). Gameplay, AI, dialogue, fear, story, the creature and the map are unchanged. Full report with before and after images: `docs/generated/CHARACTER_REDESIGN_REPORT.md`. Checks: typecheck, 40 tests, build, smoke, all headless.
+
 ## Round 5 (8 Oct 2026): eyes, fear director, dawn walk, memory theme
 
 Full report: `docs/generated/MIDNIGHT_ROUND5_REPORT.md`. In short:
@@ -80,7 +84,7 @@ Built from scratch in TypeScript, Three.js, Vite and Rapier: deterministic simul
 1. Play a full night on the laptop with headphones. Tune glass-break patience, the blackout walk past the creature, and the dawn walk.
 2. Script the dawn walk as a set piece instead of a plain summon.
 3. A real hiding spot in the corridor (needs your approval to change corridor geometry).
-4. Character polish: smoother shoulders, finger joints, hair texture instead of caps, idle animations per person.
+4. Character polish: hair cards, authored shoes and collars, a painted skin texture, one bone per finger, idle animations per person (see the character report, section 19).
 5. Eyeballs that follow the camera.
 6. Recorded voices per character; system voices differ between Windows and other systems.
 7. A 3D Ward B behind the slot (needs map approval).

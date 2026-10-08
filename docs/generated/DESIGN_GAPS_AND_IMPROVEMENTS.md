@@ -22,3 +22,11 @@
 3. "Work another night" only closes the end sheet. There is no reset to a fresh shift yet.
 4. System voices differ a lot between Windows, Mac and Chrome. Recorded lines would be more consistent.
 5. The mother's copy uses the fluent mimic body with a look override. She deserves her own animation (bare feet, hand flat on the glass).
+
+## Logged in the character pass (left alone because of the map lock)
+
+14. Item 10 above is partly done: visitors now use the MakeHuman body (see `CHARACTER_REDESIGN_REPORT.md`). Hair cards, shoes and collars still want Blender meshes.
+15. The visitor at the glass is lit mostly by the orange under light and the blue hall light. The reference has a warm side key light. Adding one is a lighting change, so it needs your approval.
+16. `tools/smoke.mjs` starts `vite preview` and kills only the npx wrapper, so a preview server stays running after each smoke run. It does not affect results, but repeated runs pile up servers. The review tools now kill their own server; smoke was left as it is.
+17. The breath puffs (item 13) now cover the mouth in face close-ups of the new heads as well.
+18. The booth glass tint is strong enough that the visitor's face colour reads yellow-green from the chair.

@@ -27,22 +27,22 @@ export interface BodySpec {
 
 export interface Arm {
   side: number;
-  sh: THREE.Group;
-  el: THREE.Group;
-  hand: THREE.Group;
-  fingers: THREE.Group[];
-  tips: THREE.Group[];
+  sh: THREE.Object3D;
+  el: THREE.Object3D;
+  hand: THREE.Object3D;
+  fingers: THREE.Object3D[];
+  tips: THREE.Object3D[];
 }
 export interface Leg {
   side: number;
-  hip: THREE.Group;
-  knee: THREE.Group;
+  hip: THREE.Object3D;
+  knee: THREE.Object3D;
 }
 export interface Rig {
   root: THREE.Group;
-  pelvis: THREE.Group;
-  chest: THREE.Group;
-  headMount: THREE.Group;
+  pelvis: THREE.Object3D;
+  chest: THREE.Object3D;
+  headMount: THREE.Object3D;
   arms: Arm[];
   legs: Leg[];
   skirt: THREE.Mesh | null;

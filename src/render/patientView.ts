@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Patient, Verdict } from '../sim/types';
 import { AVERAGE_FACE, drawFace, eyeTexture, sculptHead, type FaceLook, type FaceState } from './faces';
 import { buildBody, type Rig } from './humanoid';
+import { bodyFor, buildHuman, humansReady, loadHumans, type HumanRig } from './human';
 import { lookFor, type Look } from './looks';
 
 export const FEMALE_NAMES = new Set(['Ada', 'Edith', 'Margit', 'Hester', 'Dorothea', 'Agnes', 'Winifred', 'Odette', 'Philippa', 'Mabel', 'Imelda', 'Dolores', 'Mae', 'Rosa', 'Sister']);
@@ -29,6 +30,20 @@ const POSES: Record<string, ArmPose> = {
   glass: { sh: -1.5, el: -0.12, out: -0.1 },
 };
 
+/**
+ * The same poses for the authored body. Its forearms are longer than the old ones, so folded arms bend further
+ * and the forearms turn inward (cross) instead of reaching up to the opposite shoulder.
+ */
+type HumanPose = ArmPose & { cross: number };
+const POSES_H: Record<string, HumanPose> = {
+  rest: { sh: 0.04, el: -0.12, out: 0.09, cross: 0 },
+  hold: { sh: -0.22, el: -1.3, out: 0.02, cross: 0.35 },
+  hug: { sh: -0.38, el: -1.55, out: -0.05, cross: 0.75 },
+  folded: { sh: 0.02, el: -1.6, out: 0.02, cross: 1.05 },
+  bag: { sh: 0.03, el: -0.1, out: 0.12, cross: 0 },
+  glass: { sh: -1.5, el: -0.12, out: -0.1, cross: 0 },
+};
+
 const HEAD_SCALE = 0.84;
 
 /**
@@ -43,7 +58,11 @@ export class PatientView {
   private rim = new THREE.PointLight(0x9ab8d0, 0, 2.4, 1.6);
   private under = new THREE.PointLight(0xffa860, 0, 1.7, 1.8);
   private body: Rig | null = null;
-  private head = new THREE.Group();
+  /** The authored body, when the baked file loaded. Null means the old procedural body is in use. */
+  private human: HumanRig | null = null;
+  private head: THREE.Object3D = new THREE.Group();
+  private headScale = HEAD_SCALE;
+  private mouthZ = 0.16;
   private faceMat: THREE.MeshLambertMaterial | null = null;
   private faces: Record<FaceState, THREE.CanvasTexture> | null = null;
   private owned: { dispose: () => void }[] = [];
@@ -65,7 +84,7 @@ export class PatientView {
   private lurk = false;
   private breach: 'crack' | 'inside' | null = null;
   private mouthY = 1.5;
-  private eyes: { ball: THREE.Mesh; lid: THREE.Mesh; aim: THREE.Quaternion }[] = [];
+  private eyes: { ball: THREE.Mesh; lid: THREE.Mesh | null; aim: THREE.Quaternion }[] = [];
   private lidOpen = -0.35;
   private saccadeT = 1;
   private saccade = new THREE.Vector3();
@@ -81,10 +100,15 @@ export class PatientView {
   get facesForTest(): Record<FaceState, THREE.CanvasTexture> | null {
     return this.faces;
   }
+  /** True once the authored bodies have loaded. */
+  get humanReady(): boolean {
+    return humansReady();
+  }
 
   constructor(private readonly spawn: THREE.Vector3, private readonly stand: THREE.Vector3) {
     this.rig.add(this.rim, this.under);
     this.group.visible = false;
+    void loadHumans();
     for (let i = 0; i < 3; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, opacity: 0, depthWrite: false, fog: false }));
       s.scale.setScalar(0.05);
@@ -113,6 +137,7 @@ export class PatientView {
     this.owned = [];
     if (this.body) this.group.remove(this.body.root);
     this.body = null;
+    this.human = null;
     this.head = new THREE.Group();
     this.eyes = [];
     if (this.faces) for (const k of Object.keys(this.faces) as FaceState[]) this.faces[k].dispose();
@@ -140,6 +165,26 @@ export class PatientView {
     const fake = p.truth === 'understudy';
     const skin = new THREE.Color(look.skin[0] / 255, look.skin[1] / 255, look.skin[2] / 255).multiplyScalar(0.8);
     if (fake) skin.lerp(new THREE.Color(0x9a9c98), 0.1 + stage * 0.03);
+    if (humansReady()) {
+      const hb = bodyFor(p.castId, p.registryId, p.archetype, look.female, look.age, p.hue);
+      const h = buildHuman(look, { ...hb, skin, fake, stage, armLength: fake && stage >= 3 ? 1.1 : 1, seed: Math.floor(p.hue * 1e6) }, (d) => this.owned.push(d));
+      this.human = h;
+      this.body = h;
+      this.group.add(h.root);
+      this.head = h.head;
+      this.headScale = 1;
+      this.eyes = h.eyes.map((e) => ({ ball: e.ball, lid: null, aim: new THREE.Quaternion() }));
+      this.buildProp(look);
+      this.mouthY = h.mouthY;
+      this.mouthZ = h.mouthZ + 0.03;
+      this.group.position.copy(this.spawn);
+      this.group.rotation.y = 0;
+      this.group.visible = true;
+      this.blinkIn = 1.5 + Math.random() * 3;
+      return;
+    }
+    this.headScale = HEAD_SCALE;
+    this.mouthZ = 0.16;
     this.body = buildBody(
       {
         height: look.height,
@@ -437,8 +482,8 @@ export class PatientView {
     const wp = new THREE.Vector3();
     const parentQ = new THREE.Quaternion();
     this.eyes.forEach((e, i) => {
-      e.ball.visible = !hidden;
-      e.lid.visible = !hidden;
+      e.ball.visible = !hidden || !!this.human;
+      if (e.lid) e.lid.visible = !hidden;
       const holder = e.ball.parent!;
       holder.getWorldPosition(wp);
       holder.getWorldQuaternion(parentQ);
@@ -453,11 +498,46 @@ export class PatientView {
     });
     const want = blink ? 1.45 : this.stare ? -0.65 : fake ? -0.5 : -0.32;
     this.lidOpen += (want - this.lidOpen) * Math.min(1, dt * (blink ? 30 : 8));
-    for (const e of this.eyes) e.lid.rotation.x = this.lidOpen;
+    for (const e of this.eyes) if (e.lid) e.lid.rotation.x = this.lidOpen;
+    if (this.human) {
+      // the lids are part of the face now: close them, or pull them wide
+      const close = THREE.MathUtils.clamp((this.lidOpen + 0.32) / 1.77, 0, 1);
+      const wide = THREE.MathUtils.clamp((-0.32 - this.lidOpen) / 0.33, 0, 1);
+      const h = this.human;
+      // a fake's right lid lags the left by a fraction
+      h.setExpr('blinkL', close);
+      h.setExpr('blinkR', fake ? THREE.MathUtils.clamp(close * 0.85, 0, 1) : close);
+      h.setExpr('wideL', wide);
+      h.setExpr('wideR', wide);
+    }
+  }
+
+  /** Expressions on the authored face: talking, the stare, grief, and what is underneath a fake. */
+  private drive(face: FaceState, fake: boolean): void {
+    const h = this.human!;
+    const p = this.patient!;
+    const reveal = face === 'reveal';
+    const talk = this.speaking > 0 && !reveal;
+    const t = this.t;
+    const syll = talk ? Math.max(0, Math.sin(t * 13) * 0.6 + Math.sin(t * 5.3) * 0.4) : 0;
+    h.setExpr('mouthOpen', reveal ? 1.4 : talk ? 0.15 + syll * 0.55 : 0);
+    h.jaw.rotation.x = reveal ? 0.3 + Math.sin(t * 40) * 0.03 : talk ? syll * 0.09 : 0;
+    const tragic = !fake && (p.archetype === 'tragic' || p.castId === 'mae' || p.castId === 'hester');
+    h.setExpr('sad', tragic ? 0.75 : 0);
+    h.setExpr('frown', tragic ? 0.35 : face === 'stare' && !fake ? 0.2 : 0);
+    // a fake is too calm: the corners of the mouth turn up a little, and when it shows itself, all the way
+    h.setExpr('smile', reveal ? 1.2 : fake ? (face === 'stare' ? 0.3 : 0.1) : 0);
+    h.setExpr('browDown', !fake && face === 'stare' ? 0.4 : 0);
+    for (const e of h.eyes) e.ball.material = reveal ? h.blackEye : h.ballMat;
+    h.setPale(reveal ? 0.55 : 0);
   }
 
   private setFace(s: FaceState): void {
     if (s === 'blink') s = 'open'; // real lids do the blinking now
+    if (this.human) {
+      this.shown = s;
+      return;
+    }
     if (!this.faceMat || !this.faces || s === this.shown) return;
     this.faceMat.map = this.faces[s];
     this.shown = s;
@@ -465,8 +545,13 @@ export class PatientView {
 
   private pose(name: keyof typeof POSES | ArmPose, side: number, swing: number, fidget: number): void {
     const b = this.body!;
-    const p = typeof name === 'string' ? POSES[name] : name;
+    const p = typeof name === 'string' ? (this.human ? POSES_H[name] : POSES[name]) : name;
     const a = b.arms[side < 0 ? 0 : 1];
+    if (this.human) {
+      // forearms turn in across the body after they bend
+      a.el.rotation.order = 'YXZ';
+      a.el.rotation.y = -side * ((p as HumanPose).cross ?? 0);
+    }
     a.sh.rotation.x = p.sh + swing + fidget;
     a.sh.rotation.z = side * p.out;
     a.el.rotation.x = p.el - Math.abs(swing) * 0.3 - fidget * 0.5;
@@ -500,7 +585,9 @@ export class PatientView {
       this.head.rotation.z = Math.sin(this.t * 3.1) * 0.15;
       this.pose({ sh: -1.1, el: -0.3, out: 0.2 }, -1, Math.sin(this.t * 1.3) * 0.2, 0);
       this.pose({ sh: -1.1, el: -0.3, out: 0.2 }, 1, Math.cos(this.t * 1.1) * 0.2, 0);
-      this.setFace(Math.sin(this.t * 7) > 0.6 ? 'reveal' : 'stare');
+      const f: FaceState = Math.sin(this.t * 7) > 0.6 ? 'reveal' : 'stare';
+      this.setFace(f);
+      if (this.human) this.drive(f, true);
       return;
     }
 
@@ -543,6 +630,11 @@ export class PatientView {
     }
     b.pelvis.position.y = 0.95 * b.scaleY + (walking ? Math.abs(Math.sin(this.walkPh)) * (fake ? 0.008 : 0.025) : 0);
     b.chest.rotation.x = look.hunch * 0.35 + leanFwd + (fake && !walking ? -0.02 : 0);
+    if (this.human) {
+      // the bend starts lower down the back on the authored body, and the neck lifts the head back up to look at you
+      this.human.spine.rotation.x = look.hunch * 0.3;
+      this.human.neck.rotation.x = -(b.chest.rotation.x + this.human.spine.rotation.x) * 0.7;
+    }
     if (b.skirt) {
       b.skirt.rotation.x = walking ? Math.sin(this.walkPh * 2) * 0.03 : 0;
       b.skirt.scale.set(1 + walking * 0.14, 1, 0.8 * (1 + walking * 0.25)); // the hem swings out over the knees
@@ -593,7 +685,7 @@ export class PatientView {
     this.revealT = Math.max(this.revealT - dt, this.revealing);
     this.revealing = Math.max(0, this.revealing - dt);
     const showing = fake && (this.revealT > 0 || this.breach === 'crack');
-    head.scale.set(HEAD_SCALE * (showing ? 0.93 : 1), HEAD_SCALE * (showing ? 1.2 : 1), HEAD_SCALE);
+    head.scale.set(this.headScale * (showing ? 0.93 : 1), this.headScale * (showing ? 1.2 : 1), this.headScale);
     if (showing) head.rotation.z += (Math.random() - 0.5) * 0.25;
     if (showing) face = 'reveal';
     else if (this.stare || this.lurk) face = 'stare';
@@ -611,6 +703,7 @@ export class PatientView {
       }
     }
     this.setFace(face);
+    if (this.human) this.drive(face, fake);
     this.updateEyes(dt, cam, fake, face === 'reveal', this.blinkT > 0);
 
     // breath on the cold air. Fakes do not breathe.
@@ -622,7 +715,7 @@ export class PatientView {
         mat.opacity = 0;
         return;
       }
-      s.position.set(0, this.mouthY + ph * 0.08, 0.16 + ph * 0.28);
+      s.position.set(0, this.mouthY + ph * 0.08, this.mouthZ + ph * 0.28);
       s.scale.setScalar(0.04 + ph * 0.17);
       mat.opacity = (1 - ph / 0.7) * 0.55 * Math.min(1, ph * 8);
     });
