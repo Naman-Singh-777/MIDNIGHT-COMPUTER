@@ -46,6 +46,12 @@ describe('baked human bodies', () => {
     expect(t.length % 3).toBe(0);
   });
 
+  it('has the tall one and a bone for every finger', () => {
+    expect(json.cast.creature).toBeTruthy();
+    const names = json.bones.map((b: { name: string }) => b.name);
+    for (const s of ['.L', '.R']) for (let f = 2; f <= 5; f++) for (const p of ['a', 'b']) expect(names).toContain(`f${f}${p}${s}`);
+  });
+
   it('carries the expression shapes the face uses', () => {
     for (const e of ['blinkL', 'blinkR', 'wideL', 'wideR', 'mouthOpen', 'smile', 'frown', 'sad']) expect(json.expr[e], e).toBeTruthy();
   });

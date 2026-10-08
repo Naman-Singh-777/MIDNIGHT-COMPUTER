@@ -23,6 +23,7 @@ await page.evaluate(() => {
   g.player.update = () => {};
   if (location.hash.includes('hairdbg')) globalThis.__HAIRDBG = true;
   if (location.hash.includes('mdbg')) globalThis.__MDBG = true;
+  globalThis.__DBG = decodeURIComponent(location.hash);
 });
 // [angle around the visitor, distance, camera height, look-at height, fov]
 const V = {
@@ -48,8 +49,9 @@ for (const id of ids) {
       const g = window.__game;
       const reveal = id.startsWith('reveal:');
       const fake = id.startsWith('fake:') || reveal;
-      const cid = fake ? id.slice(id.indexOf(':') + 1) : id;
-      const p = { id: 'T', archetype: cid === 'sister' ? 'voice_mimic' : 'plain', truth: fake ? 'understudy' : 'human', registryId: cid === 'ada' ? 'R209' : 'C_' + cid, castId: cid, displayName: cid, docs: {}, faceMark: '', answers: {}, tells: [], quirk: '', hue: cid.startsWith('rand') ? (Number(cid.slice(4)) * 0.137) % 1 : 0.37, height: 1 + (cid.startsWith('rand') ? Number(cid.slice(4)) * 0.01 : 0), sprite: cid.startsWith('rand') ? Number(cid.slice(4)) : 0 };
+      const at0 = id.indexOf('@');
+      const cid = (fake ? id.slice(id.indexOf(':') + 1) : id).split('@')[0];
+      const p = { id: 'T', archetype: cid === 'sister' ? 'voice_mimic' : 'plain', truth: fake ? 'understudy' : 'human', registryId: cid === 'ada' ? 'R209' : 'C_' + cid, castId: cid, displayName: cid, docs: {}, faceMark: '', answers: {}, tells: [], quirk: '', hue: at0 > 0 ? Number(id.slice(at0 + 1)) : cid.startsWith('rand') ? (Number(cid.slice(4)) * 0.137) % 1 : 0.37, height: 1 + (cid.startsWith('rand') ? Number(cid.slice(4)) * 0.01 : 0), sprite: cid.startsWith('rand') ? Number(cid.slice(4)) : 0 };
       if (window.__lastId !== id) {
         g.view.setPatient(p, fake ? 3 : 0);
         window.__lastId = id;
@@ -62,6 +64,20 @@ for (const id of ids) {
       g.view.stand.set(at.x, 0, at.z); // present phase holds them on this spot
       g.view.group.position.set(at.x, 0, at.z);
       g.view.update(0.016, 'present', g.player.camera.position, true);
+      if (g.view.human && /open|noteeth|hide|nopuff|onlybody|nospec|nomouth/.test(location.hash)) {
+        const dr = g.view.drive;
+        g.view.drive = function (...a) {
+          dr.apply(this, a);
+          if (location.hash.includes('open')) { this.human.setExpr('mouthOpen', 0.7); this.human.jaw.rotation.x = 0.1; }
+          if (location.hash.includes('nospec')) this.human.root.traverse((o) => { if (o.material && o.material.isMeshPhysicalMaterial) { o.material.specularIntensity = 0; o.material.sheen = 0; } });
+          if (location.hash.includes('onlybody')) this.human.root.children.forEach((m) => { if (m.isSkinnedMesh && !m.geometry.morphAttributes.position) m.visible = false; });
+          const hm = /hide=(\d+)/.exec(location.hash);
+          if (hm) this.human.root.children.filter((m) => m.isSkinnedMesh)[Number(hm[1])].visible = false;
+          if (location.hash.includes('nopuff')) this.puffs.forEach((p) => (p.visible = false));
+          if (location.hash.includes('nomouthparts')) for (const m of this.human.mouthParts) m.visible = false;
+          if (location.hash.includes('noteeth')) this.human.root.traverse((o) => { if (Array.isArray(o.material)) o.material[1].visible = false; });
+        };
+      }
       g.view.group.updateMatrixWorld(true);
       const c = g.player.camera;
       let y = cy, tyy = ty;
@@ -87,7 +103,7 @@ for (const id of ids) {
       }
     }, [id, ang, dist, cy, ty, fov, v.startsWith('face') || v.startsWith('head') ? 'face' : v === 'hand' ? 'hand' : '']);
     await page.waitForTimeout(900);
-    await page.screenshot({ path: `${out}/${id.replace(':', '-')}-${v}.png` });
+    await page.screenshot({ path: `${out}/${id.replace(':', '-').replace('@', '_')}-${v}.png` });
   }
 }
 await browser.close();

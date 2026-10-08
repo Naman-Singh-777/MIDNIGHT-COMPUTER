@@ -30,3 +30,10 @@
 16. `tools/smoke.mjs` starts `vite preview` and kills only the npx wrapper, so a preview server stays running after each smoke run. It does not affect results, but repeated runs pile up servers. The review tools now kill their own server; smoke was left as it is.
 17. The breath puffs (item 13) now cover the mouth in face close-ups of the new heads as well.
 18. The booth glass tint is strong enough that the visitor's face colour reads yellow-green from the chair.
+
+## Logged in the horror pass (left alone: outside scope)
+
+19. The hall rim light on the visitor (PatientView) lights the back of the neck very pale. It is a character light, but changing its strength changes the whole look at the glass, so it was left.
+20. The booth scene now has more triangles from the telephone. If Iris Xe struggles, the coiled cord and the dial are the first things to simplify.
+21. Visitors still have shell hair. Strand cards like the tall one's would suit them, at a cost per visitor.
+22. Upper teeth are hidden by the upper lip even when a mouth is open; a small upper-lip lift on reveal would show them.

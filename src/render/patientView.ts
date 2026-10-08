@@ -45,6 +45,7 @@ const POSES_H: Record<string, HumanPose> = {
 };
 
 const HEAD_SCALE = 0.84;
+const REVEALS = ['unhinge', 'grin', 'rolled', 'hollow'] as const;
 
 /**
  * One visitor at a time. Full jointed body from humanoid.ts, a sculpted painted head on top.
@@ -63,6 +64,8 @@ export class PatientView {
   private head: THREE.Object3D = new THREE.Group();
   private headScale = HEAD_SCALE;
   private mouthZ = 0.16;
+  private revealAge = 0;
+  private eyeRoll = 0;
   private faceMat: THREE.MeshLambertMaterial | null = null;
   private faces: Record<FaceState, THREE.CanvasTexture> | null = null;
   private owned: { dispose: () => void }[] = [];
@@ -176,7 +179,7 @@ export class PatientView {
       this.eyes = h.eyes.map((e) => ({ ball: e.ball, lid: null, aim: new THREE.Quaternion() }));
       this.buildProp(look);
       this.mouthY = h.mouthY;
-      this.mouthZ = h.mouthZ + 0.03;
+      this.mouthZ = h.mouthZ + 0.035; // breath starts in front of the lips, never inside the mouth
       this.group.position.copy(this.spawn);
       this.group.rotation.y = 0;
       this.group.visible = true;
@@ -513,6 +516,15 @@ export class PatientView {
   }
 
   /** Expressions on the authored face: talking, the stare, grief, and what is underneath a fake. */
+  /**
+   * Expressions on the authored face: talking, the stare, grief, and what is underneath a fake.
+   * Each fake shows itself its own way (chosen from its seed), and the wrongness builds over the first third of a
+   * second rather than snapping to a pose: the jaw keeps going after it should have stopped.
+   *  - unhinge: the jaw drops past where a jaw can go and skews to one side, the mouth stays slack
+   *  - grin: the corners pull back beyond a smile and the teeth show, the head lays over on its side
+   *  - rolled: the eyes turn up into the head, one lid half down, the mouth hangs open
+   *  - hollow: nothing moves at all; the eyes go black, the skin goes grey, the head grows longer
+   */
   private drive(face: FaceState, fake: boolean): void {
     const h = this.human!;
     const p = this.patient!;
@@ -520,16 +532,60 @@ export class PatientView {
     const talk = this.speaking > 0 && !reveal;
     const t = this.t;
     const syll = talk ? Math.max(0, Math.sin(t * 13) * 0.6 + Math.sin(t * 5.3) * 0.4) : 0;
-    h.setExpr('mouthOpen', reveal ? 1.4 : talk ? 0.15 + syll * 0.55 : 0);
-    h.jaw.rotation.x = reveal ? 0.3 + Math.sin(t * 40) * 0.03 : talk ? syll * 0.09 : 0;
+    const kind = REVEALS[Math.floor(p.hue * 977 + (p.castId?.length ?? 0)) % REVEALS.length];
+    // 0 to 1 over the first 0.35 s, then a slow creep that never quite settles
+    const r = reveal ? Math.min(1, this.revealAge / 0.35) + Math.min(0.25, Math.max(0, this.revealAge - 0.35) * 0.1) : 0;
+    const tremor = reveal ? Math.sin(t * 37) * 0.012 + Math.sin(t * 23.1) * 0.008 : 0;
+    let mouth = talk ? 0.15 + syll * 0.55 : 0;
+    let jaw = talk ? syll * 0.09 : 0;
+    let jawZ = 0;
+    let smile = fake ? (face === 'stare' ? 0.3 : 0.1) : 0;
+    let wide = 0;
+    let black = false;
+    let pale = 0;
+    let roll = 0;
+    if (reveal) {
+      pale = 0.35 + r * 0.3;
+      if (kind === 'unhinge') {
+        mouth = 0.75 * r;
+        jaw = 0.8 * r + tremor; // well past where a jaw stops
+        jawZ = 0.16 * r * (p.hue > 0.5 ? 1 : -1);
+        smile = 0;
+        black = true;
+      } else if (kind === 'grin') {
+        mouth = 0.35 * r;
+        jaw = 0.06 * r;
+        smile = 1.9 * r;
+        wide = 1.2 * r;
+        this.head.rotation.z += (p.hue > 0.5 ? 1 : -1) * 0.55 * r;
+      } else if (kind === 'rolled') {
+        mouth = 0.5 * r;
+        jaw = 0.18 * r + tremor;
+        smile = 0;
+        roll = 1.15 * r;
+      } else {
+        mouth = 0;
+        jaw = 0;
+        smile = 0;
+        black = true;
+        pale = 0.75;
+      }
+    }
+    h.setExpr('mouthOpen', mouth);
+    h.jaw.rotation.x = jaw;
+    h.jaw.rotation.z = jawZ;
     const tragic = !fake && (p.archetype === 'tragic' || p.castId === 'mae' || p.castId === 'hester');
     h.setExpr('sad', tragic ? 0.75 : 0);
     h.setExpr('frown', tragic ? 0.35 : face === 'stare' && !fake ? 0.2 : 0);
-    // a fake is too calm: the corners of the mouth turn up a little, and when it shows itself, all the way
-    h.setExpr('smile', reveal ? 1.2 : fake ? (face === 'stare' ? 0.3 : 0.1) : 0);
+    h.setExpr('smile', smile);
     h.setExpr('browDown', !fake && face === 'stare' ? 0.4 : 0);
-    for (const e of h.eyes) e.ball.material = reveal ? h.blackEye : h.ballMat;
-    h.setPale(reveal ? 0.55 : 0);
+    if (wide > 0) {
+      h.setExpr('wideL', wide);
+      h.setExpr('wideR', wide * 0.8);
+    }
+    for (const e of h.eyes) e.ball.material = black ? h.blackEye : h.ballMat;
+    this.eyeRoll = roll;
+    h.setPale(pale);
   }
 
   private setFace(s: FaceState): void {
@@ -587,6 +643,7 @@ export class PatientView {
       this.pose({ sh: -1.1, el: -0.3, out: 0.2 }, 1, Math.cos(this.t * 1.1) * 0.2, 0);
       const f: FaceState = Math.sin(this.t * 7) > 0.6 ? 'reveal' : 'stare';
       this.setFace(f);
+      this.revealAge = f === 'reveal' ? this.revealAge + dt : 0;
       if (this.human) this.drive(f, true);
       return;
     }
@@ -685,6 +742,7 @@ export class PatientView {
     this.revealT = Math.max(this.revealT - dt, this.revealing);
     this.revealing = Math.max(0, this.revealing - dt);
     const showing = fake && (this.revealT > 0 || this.breach === 'crack');
+    this.revealAge = showing ? this.revealAge + dt : 0;
     head.scale.set(this.headScale * (showing ? 0.93 : 1), this.headScale * (showing ? 1.2 : 1), this.headScale);
     if (showing) head.rotation.z += (Math.random() - 0.5) * 0.25;
     if (showing) face = 'reveal';
@@ -705,6 +763,11 @@ export class PatientView {
     this.setFace(face);
     if (this.human) this.drive(face, fake);
     this.updateEyes(dt, cam, fake, face === 'reveal', this.blinkT > 0);
+    if (this.human && this.eyeRoll > 0) {
+      // the eyes turn up under the lids, the left lid sinks half closed
+      for (const e of this.eyes) e.ball.rotateX(-this.eyeRoll);
+      this.human.setExpr('blinkL', 0.45 * Math.min(1, this.eyeRoll));
+    }
 
     // breath on the cold air. Fakes do not breathe.
     const breath = !p.tells.includes('no_breath') && !quiet && !fake;

@@ -3,7 +3,7 @@
 One file with every round of work, what was checked, and what is left. Newest round first.
 
 Where things are:
-* Repo on GitHub: https://github.com/Naman-Singh-777/MIDNIGHT-COMPUTER (rename to MIDNIGHT pending, see section 6).
+* Repo on GitHub: https://github.com/Naman-Singh-777/MIDNIGHT777 (renamed from MIDNIGHT-COMPUTER). Site: https://naman-singh-777.github.io/MIDNIGHT777/.
 * This file in the repo: `docs/WORK_LOG_ALL_ROUNDS.md`. A copy was also saved to `C:\GameDev\MIDNIGHT_WORK_LOG.md` on your PC.
 * Round 4 details: `docs/TASKS.md` in the repo.
 * Your local copy at `C:\Users\hp\OneDrive\Desktop\MidnightWeb` does not have rounds 3 and 4 until you run `git pull` there. Round 3 and 4 work was done in a cloud clone and pushed to GitHub, which is why TASKS.md was not on your PC.
@@ -11,6 +11,10 @@ Where things are:
 Commits: `3415bf3` round 1, `eb0c963` round 2, `b7d2d0e` roadmap, `91d1c9c` round 3, `31fae08` and `e9093ed` round 4, plus the commit that adds this file. All authored as Naman-Singh-777, no co-author lines.
 
 ---
+
+## Horror pass (8 Oct 2026): mouths, glasses, hats, the tall one, telephone, corridor
+
+Fixed the red marks under every mouth (an over-broad inside-of-mouth rule), closed the see-through mouth with a cavity, added built teeth, gums and a tongue, and stopped the breath puff starting inside the lips. Glasses now have arms over the ears; hats are fitted to each skull. Bare skin at the shoulders is covered. Fakes reveal themselves four different ways, building over a third of a second. The tall one is rebuilt on the authored body: 2.72 m, stretched and starved, decayed in layers, wet hair over the face, with dormant, watching, wrong, search, locked, burst and withdraw states and planted feet. The telephone is rebuilt. The corridor got water, mould, peeling paint, black grout and a wet floor without moving anything. Report: `docs/generated/HORROR_PASS_REPORT.md`. Checks: typecheck, 41 tests, build, smoke, all headless.
 
 ## Character pass (8 Oct 2026): authored bodies for the visitors
 

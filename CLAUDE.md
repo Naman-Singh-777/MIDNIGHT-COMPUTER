@@ -11,6 +11,6 @@ Rules:
 6. Keep `src/sim` free of DOM and Three.js imports.
 7. Never toggle light `visible` at runtime. Set intensity to 0.
 8. Before finishing a change: `npm run typecheck`, `npm test`, `npm run build`, `node tools/smoke.mjs`.
-9. Remote: https://github.com/Naman-Singh-777/MIDNIGHT-COMPUTER (owner plans to rename it MIDNIGHT). Pages: `.github/workflows/pages.yml`. Use `git pull --ff-only` before pushing and confirm origin/main equals HEAD afterward. Never force push.
+9. Remote: https://github.com/Naman-Singh-777/MIDNIGHT777 (renamed from MIDNIGHT-COMPUTER). Site: https://naman-singh-777.github.io/MIDNIGHT777/. Pages: `.github/workflows/pages.yml`. Use `git pull --ff-only` before pushing and confirm origin/main equals HEAD afterward. Never force push.
 10. Read `docs/TASKS.md` first (latest round), then `docs/HANDOFF_FOR_OPUS.md`. It lists what is done and what is left.
 11. Full status and roadmap: `docs/PROJECT_REPORT_AND_ROADMAP.md`. Read it with the handoff.

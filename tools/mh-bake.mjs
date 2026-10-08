@@ -153,6 +153,8 @@ const CAST = {
   m_young: { gender: 1, age: 30, muscle: 0.5, weight: 0.5, height: 0.55, face: { 'nose-scale-vert-incr': 0.2, 'chin-prominent-incr': 0.2 } },
   m_old: { gender: 1, age: 64, muscle: 0.4, weight: 0.6, height: 0.45, face: { 'l-eye-bag-incr': 0.5, 'r-eye-bag-incr': 0.5, 'nose-volume-incr': 0.3, 'head-round': 0.3 } },
   f_young: { gender: 0, age: 29, muscle: 0.45, weight: 0.45, height: 0.5, face: { 'l-cheek-bones-incr': 0.3, 'r-cheek-bones-incr': 0.3 } },
+  // the tall one starts as a starved, very old man; the game stretches him far past this
+  creature: { gender: 1, age: 88, muscle: 0, weight: 0, height: 1, face: { 'head-age-incr': 1, 'head-oval': 1, 'head-scale-vert-incr': 1, 'head-scale-horiz-decr': 0.6, 'forehead-temple-decr': 1, 'l-cheek-volume-decr': 1, 'r-cheek-volume-decr': 1, 'l-cheek-bones-incr': 1, 'r-cheek-bones-incr': 0.7, 'l-eye-push1-in': 1, 'r-eye-push1-in': 0.8, 'l-eye-bag-incr': 1, 'r-eye-bag-incr': 1, 'r-eye-trans-down': 0.5, 'mouth-scale-horiz-incr': 1, 'mouth-upperlip-volume-decr': 1, 'mouth-lowerlip-volume-decr': 1, 'mouth-angles-down': 1, 'chin-height-incr': 1, 'chin-prominent-incr': 0.6, 'nose-scale-depth-decr': 0.8, 'nose-volume-decr': 1, 'neck-scale-horiz-decr': 1, 'neck-scale-vert-incr': 1, 'l-ear-scale-decr': 0.6, 'r-ear-rot-backward': 1 } },
   f_old: { gender: 0, age: 63, muscle: 0.35, weight: 0.55, height: 0.4, face: { 'l-eye-bag-incr': 0.5, 'r-eye-bag-incr': 0.5, 'mouth-angles-down': 0.3 } },
 };
 
@@ -175,8 +177,9 @@ const merge = (b) => {
   if (n.startsWith('lowerarm')) return 'fore' + s;
   if (n === 'wrist' || n.startsWith('metacarpal')) return 'hand' + s;
   if (n.startsWith('finger1')) return 'thumb' + s;
-  if (/^finger[2-5]-1$/.test(n)) return 'fing' + s;
-  if (/^finger[2-5]-[23]$/.test(n)) return 'tip' + s;
+  // one bone per finger at the knuckle, one for the two end joints together: fingers move on their own
+  const fm = /^finger([2-5])-([123])$/.exec(n);
+  if (fm) return 'f' + fm[1] + (fm[2] === '1' ? 'a' : 'b') + s;
   if (n.startsWith('upperleg')) return 'thigh' + s;
   if (n.startsWith('lowerleg')) return 'shin' + s;
   if (n === 'foot' || n.startsWith('toe')) return 'foot' + s;
@@ -199,8 +202,10 @@ for (const s of ['.L', '.R']) {
   add('upper', 'clav' + s, ['upperarm01']);
   add('fore', 'upper' + s, ['lowerarm01']);
   add('hand', 'fore' + s, ['wrist']);
-  add('fing', 'hand' + s, ['finger2-1', 'finger3-1', 'finger4-1', 'finger5-1']);
-  add('tip', 'fing' + s, ['finger2-2', 'finger3-2', 'finger4-2', 'finger5-2']);
+  for (let f = 2; f <= 5; f++) {
+    add('f' + f + 'a', 'hand' + s, ['finger' + f + '-1']);
+    add('f' + f + 'b', 'f' + f + 'a' + s, ['finger' + f + '-2']);
+  }
   add('thumb', 'hand' + s, ['finger1-2']);
   add('thigh', 'hips', ['upperleg01']);
   add('shin', 'thigh' + s, ['lowerleg01']);

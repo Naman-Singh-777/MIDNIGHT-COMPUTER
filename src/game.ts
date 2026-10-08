@@ -1206,7 +1206,7 @@ export class Game {
       st.x += (target.x - st.x) * Math.min(1, dt * 12);
       st.z += (target.z - st.z) * Math.min(1, dt * 12);
       this.creature.update(dt, true, st.x, st.z, 'hunt', cam.position);
-      this.creature.group.position.y = cam.position.y - 2.2;
+      this.creature.group.position.y = cam.position.y - this.creature.faceHeight; // its face level with yours
       this.flashV = Math.random() * 0.4;
     } else if (this.deathCause === 'breach') {
       const g = this.view.group;

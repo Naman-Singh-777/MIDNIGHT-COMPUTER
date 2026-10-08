@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { corridorDecals, corridorMaterials } from './corridorDress';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Physics, DynamicProp } from '../physics/world';
 import { DrawSurface, StaticBatch, makeMaterials, type Mats } from './materials';
@@ -112,13 +113,15 @@ export function buildEnvironment(physics: Physics): Env {
   const L1 = 14.2;
   const len = L1 - L0;
   const cx = (L0 + L1) / 2;
-  solid(mats.tileCorr, len, 0.1, 1.9, cx, -0.05, 0.9);
-  solid(mats.ceiling, len, 0.1, 1.9, cx, 2.95, 0.9, false);
-  solid(mats.paintGreen, len, 1.2, T, cx, 0.6, -0.08);
-  solid(mats.cream, len, 1.7, T, cx, 2.05, -0.08);
-  solid(mats.paintGreen, len, 1.2, T, cx, 0.6, 1.88);
-  solid(mats.cream, len, 1.7, T, cx, 2.05, 1.88);
-  solid(mats.paintGreen, T, 3.0, 1.9, L1 + 0.075, 1.5, 0.9);
+  // same boxes as before; only their surfaces are the corridor's own worn copies (corridorDress.ts)
+  const corr = corridorMaterials(mats);
+  solid(corr.floor, len, 0.1, 1.9, cx, -0.05, 0.9);
+  solid(corr.ceiling, len, 0.1, 1.9, cx, 2.95, 0.9, false);
+  solid(corr.dado, len, 1.2, T, cx, 0.6, -0.08);
+  solid(corr.wall, len, 1.7, T, cx, 2.05, -0.08);
+  solid(corr.dado, len, 1.2, T, cx, 0.6, 1.88);
+  solid(corr.wall, len, 1.7, T, cx, 2.05, 1.88);
+  solid(corr.dado, T, 3.0, 1.9, L1 + 0.075, 1.5, 0.9);
   // door recesses (decor) + alcove
   solid(mats.woodDark, 0.9, 2.1, 0.06, 5.5, 1.05, 0.0, false);
   solid(mats.woodDark, 0.9, 2.1, 0.06, 8.6, 1.05, 1.82, false);
@@ -129,6 +132,7 @@ export function buildEnvironment(physics: Physics): Env {
 
   const world = batch.build((g) => mergeGeometries(g, false));
   scene.add(world);
+  corridorDecals(scene);
 
   // ---------------------------------------------------------------- glass
   const glass = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.25), mats.glass);
@@ -150,6 +154,55 @@ export function buildEnvironment(physics: Physics): Env {
   const scratches = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.25), new THREE.MeshBasicMaterial({ map: scr.texture, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
   scratches.position.set(0, 1.575, -1.215);
   scene.add(scratches);
+  // smudges on the booth glass: hand and face prints from the hall side where people lean in, a wiped arc, dust.
+  // Faint enough that the hall stays clear; they show when light skims across them.
+  const smg = new DrawSurface(1024, 512);
+  {
+    const c = smg.ctx;
+    const print = (x: number, y: number, s: number, a: number): void => {
+      // a fingertip: concentric whorls
+      c.save();
+      c.translate(x, y);
+      c.rotate(a);
+      for (let r = 1; r < 9 * s; r += 1.6) {
+        c.strokeStyle = `rgba(230,236,240,${0.05 + Math.random() * 0.05})`;
+        c.lineWidth = 0.7;
+        c.beginPath();
+        c.ellipse(0, 0, r * 0.75, r, 0, 0, Math.PI * 2);
+        c.stroke();
+      }
+      c.restore();
+    };
+    // a hand flat on the glass, low and to the left of centre, and a forehead smear above it
+    for (const [hx, hy] of [[400, 330], [640, 350]]) {
+      const palm = c.createRadialGradient(hx, hy, 4, hx, hy, 46);
+      palm.addColorStop(0, 'rgba(220,226,230,0.1)');
+      palm.addColorStop(1, 'rgba(220,226,230,0)');
+      c.fillStyle = palm;
+      c.fillRect(hx - 50, hy - 50, 100, 100);
+      for (let f = 0; f < 4; f++) print(hx - 30 + f * 20, hy - 58 - Math.abs(f - 1.5) * 6, 1, (f - 1.5) * 0.15);
+      print(hx + 44, hy - 10, 0.9, 1.1);
+    }
+    const head = c.createRadialGradient(520, 210, 10, 520, 210, 90);
+    head.addColorStop(0, 'rgba(225,230,235,0.08)');
+    head.addColorStop(1, 'rgba(225,230,235,0)');
+    c.fillStyle = head;
+    c.fillRect(420, 110, 200, 200);
+    // the arc of a cloth wiped once and not again
+    c.strokeStyle = 'rgba(220,226,230,0.025)';
+    c.lineWidth = 40;
+    c.beginPath();
+    c.arc(512, 620, 420, Math.PI * 1.15, Math.PI * 1.85);
+    c.stroke();
+    for (let i = 0; i < 1600; i++) {
+      c.fillStyle = `rgba(230,225,210,${Math.random() * 0.12})`;
+      c.fillRect(Math.random() * 1024, Math.random() * 512, 1, 1);
+    }
+  }
+  smg.touch();
+  const smudges = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.25), new THREE.MeshBasicMaterial({ map: smg.texture, transparent: true, depthWrite: false, opacity: 0.5 }));
+  smudges.position.set(0, 1.575, -1.218);
+  scene.add(smudges);
 
   // ---------------------------------------------------------------- lights
   const hemi = new THREE.HemisphereLight(0x3a4a58, 0x15100c, 0.55);

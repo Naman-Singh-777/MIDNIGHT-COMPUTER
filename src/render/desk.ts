@@ -81,6 +81,44 @@ function oakTexture(): THREE.CanvasTexture {
   });
 }
 
+/** Varnish wear in the same layout as the oak texture: polished band at the front edge, matte scratches and dents. */
+function oakRoughness(): THREE.CanvasTexture {
+  const t = canvasTex(1024, 256, (g) => {
+    g.fillStyle = 'rgb(140,140,140)';
+    g.fillRect(0, 0, 1024, 256);
+    const band = g.createLinearGradient(0, 150, 0, 256);
+    band.addColorStop(0, 'rgba(70,70,70,0)');
+    band.addColorStop(1, 'rgba(70,70,70,0.8)');
+    g.fillStyle = band;
+    g.fillRect(0, 150, 1024, 106);
+    g.strokeStyle = 'rgba(230,230,230,0.55)';
+    for (let i = 0; i < 260; i++) {
+      g.lineWidth = 0.4 + Math.random() * 0.9;
+      const x = Math.random() * 1024, y = Math.random() * 256;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (Math.random() - 0.5) * 70, y + (Math.random() - 0.5) * 10);
+      g.stroke();
+    }
+    for (let i = 0; i < 60; i++) {
+      // dents: small dull pits
+      g.fillStyle = 'rgba(210,210,210,0.6)';
+      g.beginPath();
+      g.arc(Math.random() * 1024, Math.random() * 256, 1 + Math.random() * 2.5, 0, 7);
+      g.fill();
+    }
+    for (let i = 0; i < 5; i++) {
+      g.strokeStyle = 'rgba(220,220,220,0.5)';
+      g.lineWidth = 4;
+      g.beginPath();
+      g.arc(200 + Math.random() * 600, 80 + Math.random() * 120, 15 + Math.random() * 5, 0, 7);
+      g.stroke();
+    }
+  });
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
 /** Brass that has been handled for thirty years: bright where fingers go, brown and green in the corners. */
 function brassTexture(): THREE.CanvasTexture {
   return canvasTex(256, 256, (g) => {
@@ -129,6 +167,22 @@ function leatherTexture(): THREE.CanvasTexture {
       g.beginPath();
       g.moveTo(x, y);
       g.lineTo(x + (Math.random() - 0.5) * 60, y + (Math.random() - 0.5) * 20);
+      g.stroke();
+    }
+    // faded, rubbed edges where forms and sleeves slide over it, and creases from being rolled once
+    for (const [x0, y0, w, h] of [[0, 0, 512, 26], [0, 486, 512, 26], [0, 0, 26, 512], [486, 0, 26, 512]]) {
+      for (let i = 0; i < 240; i++) {
+        g.fillStyle = `rgba(150,160,120,${Math.random() * 0.12})`;
+        g.fillRect(x0 + Math.random() * w, y0 + Math.random() * h, 2 + Math.random() * 5, 2 + Math.random() * 5);
+      }
+    }
+    g.strokeStyle = 'rgba(8,16,10,0.35)';
+    for (let i = 0; i < 6; i++) {
+      g.lineWidth = 1.5;
+      const y = 60 + Math.random() * 400;
+      g.beginPath();
+      g.moveTo(0, y);
+      g.bezierCurveTo(170, y + (Math.random() - 0.5) * 20, 340, y + (Math.random() - 0.5) * 20, 512, y + (Math.random() - 0.5) * 12);
       g.stroke();
     }
     g.strokeStyle = 'rgba(160,140,90,0.35)';
@@ -202,15 +256,159 @@ function photoTexture(): THREE.CanvasTexture {
   return t;
 }
 
+/** Bakelite: near-black with a warm brown cast, rubbed glossy where hands go, dusty and scratched elsewhere. */
+function bakeliteTexture(): { color: THREE.CanvasTexture; rough: THREE.CanvasTexture } {
+  const color = canvasTex(256, 256, (g) => {
+    g.fillStyle = '#16120f';
+    g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 2500; i++) {
+      g.fillStyle = `rgba(${Math.random() < 0.5 ? '60,48,40' : '0,0,0'},${Math.random() * 0.08})`;
+      g.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+    }
+    // dust settled in the lower half and the corners
+    const dust = g.createLinearGradient(0, 120, 0, 256);
+    dust.addColorStop(0, 'rgba(120,110,95,0)');
+    dust.addColorStop(1, 'rgba(120,110,95,0.12)');
+    g.fillStyle = dust;
+    g.fillRect(0, 0, 256, 256);
+    g.strokeStyle = 'rgba(140,130,115,0.18)';
+    for (let i = 0; i < 70; i++) {
+      g.lineWidth = 0.5;
+      const x = Math.random() * 256, y = Math.random() * 256;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (Math.random() - 0.5) * 30, y + (Math.random() - 0.5) * 8);
+      g.stroke();
+    }
+  });
+  const rough = canvasTex(256, 256, (g) => {
+    g.fillStyle = 'rgb(110,110,110)';
+    g.fillRect(0, 0, 256, 256);
+    // handled areas are polished smooth; the rest is dulled
+    for (let i = 0; i < 18; i++) {
+      const x = Math.random() * 256, y = Math.random() * 256, r = 20 + Math.random() * 50;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, 'rgba(40,40,40,0.6)');
+      gr.addColorStop(1, 'rgba(40,40,40,0)');
+      g.fillStyle = gr;
+      g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    g.strokeStyle = 'rgba(220,220,220,0.5)';
+    for (let i = 0; i < 90; i++) {
+      g.lineWidth = 0.6;
+      const x = Math.random() * 256, y = Math.random() * 256;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (Math.random() - 0.5) * 30, y + (Math.random() - 0.5) * 8);
+      g.stroke();
+    }
+  });
+  rough.colorSpace = THREE.NoColorSpace;
+  return { color, rough };
+}
+
+/** The printed card under the finger wheel: numbers and letters in a ring, the exchange number in the middle. */
+function numberCardTexture(): THREE.CanvasTexture {
+  return canvasTex(256, 256, (g) => {
+    g.fillStyle = '#e6dcc4';
+    g.fillRect(0, 0, 256, 256);
+    g.fillStyle = '#1c1a18';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const letters = ['', 'ABC', 'DEF', 'GHI', 'JKL', 'MNO', 'PRS', 'TUV', 'WXY', ''];
+    for (let n = 0; n < 10; n++) {
+      // same angles as the finger holes, mirrored because the card is seen from above
+      const a = Math.PI * 0.35 + (n / 10) * Math.PI * 1.62;
+      const x = 128 + Math.cos(a) * 94, y = 128 - Math.sin(a) * 94;
+      g.font = 'bold 24px Georgia, serif';
+      g.fillText(String((n + 1) % 10), x, y + 4);
+      g.font = '9px Georgia, serif';
+      g.fillText(letters[n], x, y - 13);
+    }
+    for (let i = 0; i < 400; i++) {
+      g.fillStyle = `rgba(90,70,40,${Math.random() * 0.08})`;
+      g.fillRect(Math.random() * 256, Math.random() * 256, 3, 3);
+    }
+  });
+}
+
+function centreLabelTexture(): THREE.CanvasTexture {
+  return canvasTex(64, 64, (g) => {
+    g.fillStyle = '#ece4cf';
+    g.fillRect(0, 0, 64, 64);
+    g.fillStyle = '#2a2420';
+    g.textAlign = 'center';
+    g.font = 'bold 9px Georgia, serif';
+    g.fillText('VESPER', 32, 26);
+    g.fillText('HOLLOW 17', 32, 38);
+    g.font = '7px Georgia, serif';
+    g.fillText('INTAKE', 32, 48);
+  });
+}
+
+/** The face of a handset cup: a ring of small holes for the earpiece, a round grille for the mouthpiece. */
+function grilleTexture(ear: boolean): THREE.CanvasTexture {
+  return canvasTex(64, 64, (g) => {
+    g.fillStyle = '#9a948a';
+    g.fillRect(0, 0, 64, 64);
+    g.fillStyle = '#0a0908';
+    if (ear) {
+      for (let r = 0; r < 3; r++) for (let n = 0; n < 6 + r * 6; n++) {
+        const a = (n / (6 + r * 6)) * Math.PI * 2;
+        g.beginPath();
+        g.arc(32 + Math.cos(a) * (6 + r * 7), 32 + Math.sin(a) * (6 + r * 7), 1.6, 0, 7);
+        g.fill();
+      }
+    } else {
+      for (let y = 10; y < 56; y += 5) for (let x = 10; x < 56; x += 5) if ((x - 32) ** 2 + (y - 32) ** 2 < 400) {
+        g.beginPath();
+        g.arc(x, y, 1.5, 0, 7);
+        g.fill();
+      }
+    }
+  });
+}
+
+/** A tube along a curve whose oval section changes along its length: rx, ry at each t. */
+function sweep(curve: THREE.Curve<THREE.Vector3>, segs: number, sides: number, section: (t: number) => [number, number]): THREE.BufferGeometry {
+  const frames = curve.computeFrenetFrames(segs, false);
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const p = curve.getPointAt(t);
+    const [rx, ry] = section(t);
+    for (let j = 0; j <= sides; j++) {
+      const a = (j / sides) * Math.PI * 2;
+      // keep the oval's long axis horizontal: binormal is horizontal for a curve in the xy plane
+      const v = p.clone().addScaledVector(frames.binormals[i], Math.cos(a) * rx).addScaledVector(frames.normals[i], Math.sin(a) * ry);
+      pos.push(v.x, v.y, v.z);
+    }
+  }
+  for (let i = 0; i < segs; i++)
+    for (let j = 0; j < sides; j++) {
+      const a = i * (sides + 1) + j, b = a + sides + 1;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Desk {
   const g = new THREE.Group();
   scene.add(g);
   void mats;
   const oakMap = oakTexture();
-  const oak = new THREE.MeshStandardMaterial({ map: oakMap, bumpMap: oakMap, bumpScale: 0.6, roughness: 0.58, color: 0xd8b090 });
-  const oakDark = new THREE.MeshStandardMaterial({ map: oakMap, bumpMap: oakMap, bumpScale: 0.6, roughness: 0.7, color: 0x8a6a50 });
+  // darker, redder oak under thirty years of varnish: a roughness map keeps the polish where arms rub and dulls
+  // it in scratches, dents and cup rings
+  const oakRough = oakRoughness();
+  const oak = new THREE.MeshStandardMaterial({ map: oakMap, bumpMap: oakMap, bumpScale: 0.6, roughnessMap: oakRough, roughness: 1, color: 0xb47a58 });
+  const oakDark = new THREE.MeshStandardMaterial({ map: oakMap, bumpMap: oakMap, bumpScale: 0.6, roughnessMap: oakRough, roughness: 1.1, color: 0x6e4634 });
   const brass = new THREE.MeshStandardMaterial({ map: brassTexture(), roughness: 0.42, metalness: 0.85, color: 0xffffff });
-  const bakelite = std(0x121110, 0.3, 0.05);
+  const bakelite = std(0x121110, 0.3, 0.05); // pens
   const plastic = plasticTexture();
   const beige = new THREE.MeshStandardMaterial({ map: plastic, bumpMap: plastic, bumpScale: 0.2, roughness: 0.62, color: 0xe8e0c8 });
   const beigeDark = new THREE.MeshStandardMaterial({ map: plastic, roughness: 0.7, color: 0xb0a488 });
@@ -377,33 +575,131 @@ export function buildDesk(scene: THREE.Scene, physics: Physics, mats: Mats): Des
   keys.castShadow = true;
   kb.add(keys);
 
-  // ---------------------------------------------------------------- rotary phone (same spot)
+  // ---------------------------------------------------------------- rotary phone (same spot, same footprint)
+  // A 1950s desk set: a domed Bakelite case on a plinth with a sloped front, a finger wheel with ten holes over a
+  // printed number card and a metal finger stop, a raised cradle with two forks and the hook plungers between them,
+  // a contoured handset resting in the forks, a coiled cord to the left side of the case and a line cord off the back.
   const phone = new THREE.Group();
   phone.position.set(-0.3, TOP, -0.9);
   phone.rotation.y = 0.2;
   g.add(phone);
-  const bodyPts = [new THREE.Vector2(0.001, 0.1), new THREE.Vector2(0.06, 0.098), new THREE.Vector2(0.1, 0.07), new THREE.Vector2(0.115, 0.02), new THREE.Vector2(0.12, 0)];
-  const pb = add(new THREE.LatheGeometry(bodyPts, 24), bakelite, 0, 0, 0, phone);
-  pb.scale.set(1, 1, 0.9);
-  add(new THREE.CylinderGeometry(0.06, 0.062, 0.012, 24), std(0xe8e2d0, 0.4), 0, 0.075, 0.07, phone).rotation.x = 0.55;
-  const dial = add(new THREE.TorusGeometry(0.05, 0.008, 6, 24), std(0x1a1a1a, 0.25, 0.1), 0, 0.083, 0.072, phone);
-  dial.rotation.x = Math.PI / 2 + 0.55;
-  for (const sx of [-1, 1]) add(new THREE.BoxGeometry(0.02, 0.03, 0.03), bakelite, sx * 0.085, 0.105, -0.01, phone); // cradle prongs
-  const handset = new THREE.Group();
-  handset.position.set(0, 0.125, -0.01);
-  phone.add(handset);
-  add(new THREE.CylinderGeometry(0.016, 0.016, 0.2, 12), bakelite, 0, 0, 0, handset).rotation.z = Math.PI / 2;
+  const bakeTex = bakeliteTexture();
+  const bake = new THREE.MeshPhysicalMaterial({ color: 0x9a9a9a, map: bakeTex.color, roughnessMap: bakeTex.rough, roughness: 0.9, metalness: 0, clearcoat: 0.35, clearcoatRoughness: 0.28 });
+  const bakeDark = new THREE.MeshPhysicalMaterial({ color: 0xb0b0b0, map: bakeTex.color, roughnessMap: bakeTex.rough, roughness: 1, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.5 });
+  const chrome = std(0xb8b4aa, 0.28, 0.9);
+  // plinth and the domed case, its front pressed down into a slope for the dial
+  add(rbox(0.215, 0.018, 0.235, 0.007), bakeDark, 0, 0.009, 0, phone);
+  const caseGeo = new THREE.SphereGeometry(1, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cp = caseGeo.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < cp.count; i++) {
+    let x = cp.getX(i), y = cp.getY(i), z = cp.getZ(i);
+    // squarer than a dome: push the sides out toward a rounded box
+    // squarer than a dome: push the sides out toward a rounded box, keep the top fairly flat
+    const sq = 1 + 0.3 * (1 - Math.abs(y));
+    x *= 0.1 * sq;
+    z *= 0.108 * sq;
+    y = Math.pow(Math.max(0, y), 0.7) * 0.074;
+    if (z > 0) y -= z * 0.36; // the sloped front
+    cp.setXYZ(i, x, Math.max(0, y), z);
+  }
+  caseGeo.computeVertexNormals();
+  add(caseGeo, bake, 0, 0.017, -0.004, phone);
+  // the dial sits on the slope, tilted toward the user
+  const dial = new THREE.Group();
+  // on the slope, facing up and toward the chair
+  dial.position.set(0, 0.066, 0.07);
+  dial.rotation.x = 0.62;
+  phone.add(dial);
+  add(new THREE.CylinderGeometry(0.05, 0.052, 0.006, 40), bakeDark, 0, -0.004, 0, dial).rotation.x = 0;
+  const numbers = numberCardTexture();
+  const card = add(new THREE.CircleGeometry(0.046, 40), new THREE.MeshStandardMaterial({ map: numbers, roughness: 0.6 }), 0, 0.0005, 0, dial, false);
+  card.rotation.x = -Math.PI / 2;
+  // the finger wheel: a clear-black disc with ten holes round its edge
+  const wheel = new THREE.Shape();
+  wheel.absarc(0, 0, 0.047, 0, Math.PI * 2, false);
+  for (let n = 0; n < 10; n++) {
+    const a = Math.PI * 0.35 + (n / 10) * Math.PI * 1.62;
+    const hole = new THREE.Path();
+    hole.absarc(Math.cos(a) * 0.034, Math.sin(a) * 0.034, 0.0072, 0, Math.PI * 2, true);
+    wheel.holes.push(hole);
+  }
+  const centre = new THREE.Path();
+  centre.absarc(0, 0, 0.014, 0, Math.PI * 2, true);
+  wheel.holes.push(centre);
+  const wheelGeo = new THREE.ExtrudeGeometry(wheel, { depth: 0.004, bevelEnabled: true, bevelThickness: 0.0008, bevelSize: 0.0008, bevelSegments: 2, curveSegments: 40 });
+  wheelGeo.rotateX(-Math.PI / 2);
+  add(wheelGeo, new THREE.MeshPhysicalMaterial({ color: 0x0b0a09, roughness: 0.25, clearcoat: 0.8, clearcoatRoughness: 0.15, transparent: true, opacity: 0.93 }), 0, 0.0055, 0, dial);
+  const label = add(new THREE.CircleGeometry(0.0135, 24), new THREE.MeshStandardMaterial({ map: centreLabelTexture(), roughness: 0.7 }), 0, 0.0064, 0, dial, false);
+  label.rotation.x = -Math.PI / 2;
+  // the finger stop: a bent chrome hook at four o'clock
+  const stopCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(0.05, 0.002, 0.012), new THREE.Vector3(0.054, 0.008, 0.019), new THREE.Vector3(0.046, 0.012, 0.026)]);
+  add(new THREE.TubeGeometry(stopCurve, 10, 0.0018, 6), chrome, 0, 0, 0, dial);
+  // the cradle: a raised bridge across the top with a fork at each end and the two hook plungers between
+  const cradleY = 0.095;
   for (const sx of [-1, 1]) {
-    const cup = add(new THREE.CylinderGeometry(0.033, 0.024, 0.04, 16), bakelite, sx * 0.105, -0.012, 0, handset);
-    cup.rotation.x = 0;
+    const fork = new THREE.Shape();
+    fork.moveTo(-0.016, 0);
+    fork.lineTo(-0.016, 0.022);
+    fork.quadraticCurveTo(-0.014, 0.03, -0.009, 0.03);
+    fork.quadraticCurveTo(0, 0.016, 0.009, 0.03);
+    fork.quadraticCurveTo(0.014, 0.03, 0.016, 0.022);
+    fork.lineTo(0.016, 0);
+    fork.lineTo(-0.016, 0);
+    const fg = new THREE.ExtrudeGeometry(fork, { depth: 0.034, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 2 });
+    fg.translate(0, 0, -0.017);
+    add(fg, bake, sx * 0.072, cradleY - 0.03, -0.018, phone);
+    add(rbox(0.011, 0.014, 0.011, 0.004), std(0xd8d2c0, 0.4), sx * 0.032, cradleY - 0.01, -0.02, phone); // plunger
   }
+  add(rbox(0.12, 0.016, 0.03, 0.006), bake, 0, cradleY - 0.022, -0.02, phone); // bridge between the forks
+  // the handset: a curved handle between a round earpiece and mouthpiece, cups facing down into the forks
+  const handset = new THREE.Group();
+  handset.position.set(0, cradleY - 0.019, -0.018); // the handle lies down in the dips of the forks
+  phone.add(handset);
+  const spine: THREE.Vector3[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    spine.push(new THREE.Vector3(-0.1 + t * 0.2, 0.012 + Math.sin(t * Math.PI) * 0.016, 0));
+  }
+  const handleGeo = sweep(new THREE.CatmullRomCurve3(spine), 40, 14, (t) => {
+    // thick at the ends where it meets the cups, slimmer grip in the middle; an oval section
+    const r = 0.011 + Math.pow(Math.abs(t - 0.5) * 2, 3) * 0.007;
+    return [r * 1.25, r * 0.85];
+  });
+  add(handleGeo, bake, 0, 0, 0, handset);
+  for (const sx of [-1, 1]) {
+    const cup: THREE.Vector2[] = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      cup.push(new THREE.Vector2(0.012 + Math.sin(t * Math.PI * 0.5) * 0.021, t * 0.028));
+    }
+    cup.push(new THREE.Vector2(0.032, 0.03), new THREE.Vector2(0.028, 0.031));
+    const cg = new THREE.LatheGeometry(cup, 32);
+    cg.rotateX(Math.PI); // open side down
+    add(cg, bake, sx * 0.1, 0.03, 0, handset);
+    // the face of each cup: perforated for the earpiece, a grille for the mouthpiece
+    const face = add(new THREE.CircleGeometry(0.027, 28), new THREE.MeshStandardMaterial({ map: grilleTexture(sx > 0), roughness: 0.6, color: 0x2a2826 }), sx * 0.1, -0.0015, 0, handset, false);
+    face.rotation.x = Math.PI / 2;
+  }
+  // coiled cord: from the mouthpiece end, sagging over the desk, into the left side of the case
+  const path = new THREE.CubicBezierCurve3(new THREE.Vector3(-0.115, 0.1, -0.018), new THREE.Vector3(-0.2, 0.06, 0.02), new THREE.Vector3(-0.22, 0.0, 0.1), new THREE.Vector3(-0.1, 0.012, 0.06));
   const coil: THREE.Vector3[] = [];
-  for (let i = 0; i <= 120; i++) {
-    const t = i / 120;
-    coil.push(new THREE.Vector3(-0.1 - t * 0.25 + Math.cos(t * 80) * 0.012, 0.03 - t * 0.02 + Math.sin(t * 80) * 0.012, Math.sin(t * 3) * 0.06));
+  const turns = 70;
+  const frames = path.computeFrenetFrames(600, false);
+  for (let i = 0; i <= 600; i++) {
+    const t = i / 600;
+    const p = path.getPointAt(t);
+    const a = t * turns * Math.PI * 2;
+    const rr = 0.0055;
+    p.addScaledVector(frames.normals[i], Math.cos(a) * rr).addScaledVector(frames.binormals[i], Math.sin(a) * rr);
+    coil.push(p);
   }
-  add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(coil), 240, 0.003, 5), bakelite, 0, 0, 0, phone);
-  const phoneLed = add(new THREE.SphereGeometry(0.009, 8, 6), new THREE.MeshBasicMaterial({ color: 0x331100 }), 0.09, 0.03, 0.08, phone, false);
+  add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(coil), 700, 0.0016, 4), std(0x0d0c0b, 0.45), 0, 0, 0, phone, false);
+  // straight line cord out of the back, off the edge of the desk
+  const line = new THREE.CatmullRomCurve3([new THREE.Vector3(0.02, 0.01, -0.11), new THREE.Vector3(0.05, 0.004, -0.2), new THREE.Vector3(0.12, 0.003, -0.3), new THREE.Vector3(0.2, -0.04, -0.36)]);
+  add(new THREE.TubeGeometry(line, 30, 0.0028, 6), std(0x1a1816, 0.6), 0, 0, 0, phone);
+  // the ring lamp: a small amber jewel on the plinth (the game blinks it when the line rings)
+  const phoneLed = add(new THREE.SphereGeometry(0.0055, 10, 8), new THREE.MeshBasicMaterial({ color: 0x331100 }), 0.085, 0.02, 0.105, phone, false);
+  add(new THREE.TorusGeometry(0.0065, 0.0015, 6, 14), chrome, 0.085, 0.02, 0.104, phone);
 
   // invisible handles for the things you can pick up or use from the chair
   const hit = (id: string, w: number, h: number, d: number, x: number, y: number, z: number): THREE.Mesh => {

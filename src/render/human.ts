@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { eyeTexture, fabricTexture, type FabricKind } from './faces';
 import type { Arm, Leg, Rig } from './humanoid';
 import type { Look } from './looks';
@@ -229,6 +231,8 @@ export interface HumanRig extends Rig {
   mouthZ: number;
   setExpr(name: ExprName, v: number): void;
   setPale(k: number): void;
+  /** Teeth, gums and tongue. */
+  mouthParts: THREE.Mesh[];
 }
 
 export interface HumanOpts {
@@ -239,6 +243,24 @@ export interface HumanOpts {
   stage: number;
   armLength: number;
   seed: number;
+  /** Per bone [length, thickness] multipliers. A name without .L/.R means both sides. */
+  stretch?: Record<string, [number, number]>;
+  /** Make the finished body exactly this tall (after any stretch). */
+  fitHeight?: number;
+  shoulderDrop?: number;
+  armOut?: number;
+  /** Called with the rest-pose positions and normals before anything is built, to reshape the surface. */
+  sculpt?: (P: Float32Array, N: Float32Array, info: SculptInfo) => void;
+  /** Replaces the skin colour pass. RGB per original vertex, plus a wetness 0 to 1 used for shine. */
+  paint?: (info: SculptInfo, rgb: Float32Array, wet: Float32Array) => void;
+}
+
+export interface SculptInfo {
+  nBody: number;
+  k: number;
+  joint: (name: string) => THREE.Vector3;
+  weight: (i: number, names: string[]) => number;
+  nbr: (i: number) => Int32Array;
 }
 
 /** Which baked body a visitor wears. Named people have their own; anyone else is a blend of two stock bodies. */
@@ -267,7 +289,7 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
   const Bc = o.blend ? J.cast[o.blend.other] : null;
   const bt = o.blend?.t ?? 0;
   const baseH = A.height + (Bc ? (Bc.height - A.height) * bt : 0);
-  const k = look.height / baseH; // uniform scale to the visitor's height
+  let k = look.height / baseH; // uniform scale to the visitor's height
   const q = 1 / J.scale;
 
   // positions, joints and eyes for this person
@@ -300,29 +322,68 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
   // the few proportion changes (a fake's arms grow at stage 3). This is baked into the rest shape so the
   // game's joint angles mean the same thing they did on the old rig.
   const Rq = Array.from({ length: nB }, () => new THREE.Quaternion());
-  const Sc = Array.from({ length: nB }, () => new THREE.Vector3(1, 1, 1));
+  // stretch per bone: [length along the bone, thickness across it]. Scaling along the bone's own axis (not the
+  // world axes) means a diagonal limb never shears, and a bone's stretch moves its children without fattening them.
+  const len = new Float32Array(nB).fill(1);
+  const thick = new Float32Array(nB).fill(1);
   const Rz = (a: number): THREE.Quaternion => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), a);
-  const drop = 0.04 + Math.max(0, look.age - 40) * 0.0025 + look.hunch * 0.08;
+  const drop = o.shoulderDrop ?? 0.04 + Math.max(0, look.age - 40) * 0.0025 + look.hunch * 0.08;
   for (const s of ['.L', '.R']) {
     const side = Math.sign(Jw[bi('upper' + s)].x);
     const clav = bi('clav' + s), up = bi('upper' + s), fo = bi('fore' + s), ha = bi('hand' + s);
     Rq[clav] = Rz(-side * drop);
     const d = Jw[fo].clone().sub(Jw[up]).applyQuaternion(Rq[clav]);
     const phi = Math.atan2(d.x, -d.y);
-    Rq[up] = Rz(side * 0.07 - phi);
+    Rq[up] = Rz(side * (o.armOut ?? 0.07) - phi);
     const d2 = Jw[ha].clone().sub(Jw[fo]).applyQuaternion(Rq[clav]).applyQuaternion(Rq[up]);
     Rq[fo] = Rz(side * 0.03 - Math.atan2(d2.x, -d2.y));
-    Sc[up].set(1, o.armLength, 1);
+    for (const b of [up, fo, ha]) len[b] = o.armLength;
   }
-  const M: THREE.Matrix4[] = [];
+  for (const [name, [l, t]] of Object.entries(o.stretch ?? {})) {
+    for (const b of S.bone.has(name) ? [name] : [name + '.L', name + '.R']) {
+      if (!S.bone.has(b)) continue;
+      len[bi(b)] *= l;
+      thick[bi(b)] *= t;
+    }
+  }
+  // each bone's axis: toward its main child joint
+  const axisOf = (i: number): THREE.Vector3 => {
+    const n = J.bones[i].name;
+    const sd = n.endsWith('.L') ? '.L' : n.endsWith('.R') ? '.R' : '';
+    const base = sd ? n.slice(0, -2) : n;
+    const to = (m: string): THREE.Vector3 => Jw[bi(m)].clone().sub(Jw[i]).normalize();
+    const next: Record<string, string> = { hips: 'spine', spine: 'spine1', spine1: 'chest', chest: 'neck', neck: 'head', clav: 'upper' + sd, upper: 'fore' + sd, fore: 'hand' + sd, thigh: 'shin' + sd, shin: 'foot' + sd };
+    if (next[base]) return to(next[base]);
+    if (base === 'head') return new THREE.Vector3(0, 1, 0);
+    if (base === 'jaw') return new THREE.Vector3(0, -0.6, 0.8).normalize();
+    if (base === 'hand') return Jw[bi('f3a' + sd)].clone().add(Jw[bi('f4a' + sd)]).multiplyScalar(0.5).sub(Jw[i]).normalize();
+    if (base === 'foot') return new THREE.Vector3(0, -0.35, 1).normalize();
+    const fm = /^f(\d)([ab])$/.exec(base);
+    if (fm) return Jw[bi('f' + fm[1] + 'b' + sd)].clone().sub(Jw[bi('f' + fm[1] + 'a' + sd)]).normalize();
+    if (base === 'thumb') return Jw[i].clone().sub(Jw[bi('hand' + sd)]).normalize();
+    return new THREE.Vector3(0, 1, 0);
+  };
+  const L3 = (i: number): THREE.Matrix4 => {
+    const d = axisOf(i);
+    const a = len[i], t = thick[i];
+    // I*t + (a - t) d d^T
+    const m = new THREE.Matrix4().set(
+      t + (a - t) * d.x * d.x, (a - t) * d.x * d.y, (a - t) * d.x * d.z, 0,
+      (a - t) * d.y * d.x, t + (a - t) * d.y * d.y, (a - t) * d.y * d.z, 0,
+      (a - t) * d.z * d.x, (a - t) * d.z * d.y, t + (a - t) * d.z * d.z, 0,
+      0, 0, 0, 1,
+    );
+    return m;
+  };
+  const Lm = J.bones.map((_b, i) => L3(i));
+  const Rc: THREE.Quaternion[] = [];
+  const NJ: THREE.Vector3[] = [];
   const K: THREE.Matrix4[] = [];
-  const tmp = new THREE.Matrix4();
   J.bones.forEach((b, i) => {
     const p = b.parent ? S.bone.get(b.parent)! : -1;
-    const local = new THREE.Matrix4().compose(p >= 0 ? Jw[i].clone().sub(Jw[p]) : Jw[i].clone(), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
-    local.multiply(tmp.makeScale(Sc[i].x, Sc[i].y, Sc[i].z)).multiply(tmp.makeRotationFromQuaternion(Rq[i]));
-    M[i] = p >= 0 ? M[p].clone().multiply(local) : local;
-    K[i] = M[i].clone().multiply(tmp.makeTranslation(-Jw[i].x, -Jw[i].y, -Jw[i].z));
+    Rc[i] = p >= 0 ? Rc[p].clone().multiply(Rq[i]) : Rq[i].clone();
+    NJ[i] = p >= 0 ? Jw[i].clone().sub(Jw[p]).applyMatrix4(Lm[p]).applyQuaternion(Rc[p]).add(NJ[p]) : Jw[i].clone();
+    K[i] = new THREE.Matrix4().makeTranslation(NJ[i].x, NJ[i].y, NJ[i].z).multiply(new THREE.Matrix4().makeRotationFromQuaternion(Rc[i])).multiply(Lm[i]).multiply(new THREE.Matrix4().makeTranslation(-Jw[i].x, -Jw[i].y, -Jw[i].z));
   });
   {
     const v = new THREE.Vector3();
@@ -340,8 +401,33 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
       P[i * 3 + 2] = acc.z;
     }
   }
-  const Jp = M.map((m) => new THREE.Vector3().setFromMatrixPosition(m));
-  for (const e of eyesBind) e.c.applyMatrix4(K[bi('head')]);
+  const Jp = NJ;
+  for (const e of eyesBind) {
+    e.c.applyMatrix4(K[bi('head')]);
+    e.r *= thick[bi('head')];
+  }
+  // stand on the floor again, and reach the asked height exactly when the stretch changed it
+  {
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < S.nBody; i++) {
+      minY = Math.min(minY, P[i * 3 + 1]);
+      maxY = Math.max(maxY, P[i * 3 + 1]);
+    }
+    const f = o.fitHeight ? o.fitHeight / (maxY - minY) : 1;
+    if (Math.abs(minY) > 1e-4 || f !== 1) {
+      for (let i = 0; i < nO; i++) {
+        P[i * 3] *= f;
+        P[i * 3 + 1] = (P[i * 3 + 1] - minY) * f;
+        P[i * 3 + 2] *= f;
+      }
+      for (const j of Jp) j.set(j.x * f, (j.y - minY) * f, j.z * f);
+      for (const e of eyesBind) {
+        e.c.set(e.c.x * f, (e.c.y - minY) * f, e.c.z * f);
+        e.r *= f;
+      }
+      k *= f;
+    }
+  }
 
   // ---------------------------------------------------------------- normals on the welded surface
   const N = new Float32Array(nO * 3);
@@ -368,6 +454,24 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     }
   };
   computeNormals(P, N, S.body);
+  const sculptInfo = (): SculptInfo => ({
+    nBody: S.nBody,
+    k,
+    joint: (name) => Jp[bi(name)].clone(),
+    weight: (i, names) => {
+      let s2 = 0;
+      for (let j = 0; j < 4; j++) {
+        const n = J.bones[S.skinIdx[i * 4 + j]].name;
+        if (names.some((x) => n === x || n.startsWith(x + '.'))) s2 += S.skinW[i * 4 + j] / 255;
+      }
+      return s2;
+    },
+    nbr: (i) => S.nbr.subarray(S.nbrStart[i], S.nbrStart[i + 1]),
+  });
+  if (o.sculpt) {
+    o.sculpt(P, N, sculptInfo());
+    computeNormals(P, N, S.body);
+  }
 
   // ---------------------------------------------------------------- regions, by skin weight and height
   const W = (i: number, names: string[]): number => {
@@ -380,7 +484,7 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
   };
   const Y = (i: number): number => P[i * 3 + 1];
   // colour masks: how far each region shape moves a vertex (0 to 1), eased so the region fills out
-  const EASE: Record<string, [number, number]> = { lips: [0.04, 0.3], cheeks: [0.05, 0.5], bags: [0.04, 0.4], brows: [0.1, 0.6], ears: [0.08, 0.35], nose: [0.04, 0.4], lids: [0.04, 0.35] };
+  const EASE: Record<string, [number, number]> = { lips: [0.12, 0.45], cheeks: [0.05, 0.5], bags: [0.04, 0.4], brows: [0.1, 0.6], ears: [0.08, 0.35], nose: [0.04, 0.4], lids: [0.04, 0.35] };
   const mask = (i: number, name: string): number => {
     const e = EASE[name];
     return smooth(e[0], e[1], S.masks[i * J.masks.length + J.masks.indexOf(name)] / 255);
@@ -396,7 +500,7 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     wNeck[i] = W(i, ['neck']);
     wTorso[i] = W(i, ['spine', 'spine1', 'chest', 'clav']);
     wArm[i] = W(i, ['upper', 'fore']);
-    wHand[i] = W(i, ['hand', 'fing', 'tip', 'thumb']);
+    wHand[i] = W(i, ['hand', 'f2a', 'f2b', 'f3a', 'f3b', 'f4a', 'f4b', 'f5a', 'f5b', 'thumb']);
     wLeg[i] = W(i, ['thigh', 'shin']);
     wFoot[i] = W(i, ['foot']);
     wHips[i] = W(i, ['hips']);
@@ -429,6 +533,8 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
   }
   my /= mw || 1;
   mz /= mw || 1;
+  let lipFront = mz;
+  for (let i = 0; i < S.nBody; i++) if (mask(i, 'lips') > 0.5) lipFront = Math.max(lipFront, P[i * 3 + 2]);
   // the nose: its tip is the most forward point on the midline between mouth and eyes; the base of the nose
   // (where it meets the lip) is the deepest midline point between the tip and the mouth
   let tipY = eyeY, tipZ = -9;
@@ -453,19 +559,23 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     if (b.parent) bones[S.bone.get(b.parent)!].add(bones[i]);
     else root.add(bones[i]);
   });
-  // fingers curl toward the palm. The finger bone gets a rest frame whose x axis runs across the knuckles, with
-  // the back of the hand along +z, so the game's negative x rotation folds the fingers into the palm.
+  // fingers curl toward the palm. Each finger bone gets a rest frame whose x axis runs across the knuckles, with
+  // the back of the hand along +z, so the game's negative x rotation folds that finger into the palm.
   for (const s of ['.L', '.R']) {
     const side = Math.sign(Jp[bi('hand' + s)].x);
-    const d = Jp[bi('fing' + s)].clone().sub(Jp[bi('hand' + s)]).normalize();
+    const knuckles = Jp[bi('f3a' + s)].clone().add(Jp[bi('f4a' + s)]).multiplyScalar(0.5);
+    const d = knuckles.clone().sub(Jp[bi('hand' + s)]).normalize();
     const t = Jp[bi('thumb' + s)].clone().sub(Jp[bi('hand' + s)]);
     t.addScaledVector(d, -t.dot(d));
     const back = new THREE.Vector3().crossVectors(d, t).multiplyScalar(-side).normalize();
-    const axis = new THREE.Vector3().crossVectors(d, back).normalize();
-    const bn = bones[bi('fing' + s)];
-    bn.rotation.order = 'ZYX';
-    bn.rotation.set(0, -Math.asin(THREE.MathUtils.clamp(axis.z, -1, 1)), Math.atan2(axis.y, axis.x));
-    bones[bi('tip' + s)].rotation.order = 'ZYX';
+    for (let f = 2; f <= 5; f++) {
+      const fd = Jp[bi('f' + f + 'b' + s)].clone().sub(Jp[bi('f' + f + 'a' + s)]).normalize();
+      const axis = new THREE.Vector3().crossVectors(fd, back).normalize();
+      const bn = bones[bi('f' + f + 'a' + s)];
+      bn.rotation.order = 'ZYX';
+      bn.rotation.set(0, -Math.asin(THREE.MathUtils.clamp(axis.z, -1, 1)), Math.atan2(axis.y, axis.x));
+      bones[bi('f' + f + 'b' + s)].rotation.order = 'ZYX';
+    }
   }
   J.bones.forEach((_b, i) => {
     const parent = bones[i].parent!;
@@ -557,6 +667,11 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
   const shoeC = lin(look.shoes);
 
   // shirt front, tie, apron, stole: colour on the garment, by position on the body
+  const frontVWide = (i: number): boolean => {
+    const x = Math.abs(P[i * 3]), y = P[i * 3 + 1], z = P[i * 3 + 2];
+    const bottom = chestJ.y + 0.06 * k;
+    return z > chestJ.z - 0.01 * k && y > bottom - 0.05 * k && y < collarTop + 0.01 * k && x < (Math.max(0, y - bottom)) * (out === 'work' ? 0.3 : 0.22) + 0.03 * k;
+  };
   const frontV = (i: number): number => {
     const x = Math.abs(P[i * 3]), y = P[i * 3 + 1], z = P[i * 3 + 2];
     if (z < chestJ.z) return 0;
@@ -580,12 +695,18 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     const trunk = 1 - (wArm[i] + wHand[i] + wHead[i] + wNeck[i] + wFoot[i]) > 0.5;
     const sleeve = wArm[i] > 0.5 && wHand[i] < 0.3;
     // the neck stays bare, but the slope of the shoulders beside it is cloth
-    const shoulder = wNeck[i] > 0.3 && wHead[i] < 0.05 && (y < neckY + 0.012 * k || (Math.abs(P[i * 3]) > 0.058 * k && y < neckY + 0.07 * k));
-    if (((trunk && y > waistY - 0.07 * k) || sleeve || shoulder) && wHand[i] < 0.3) topR[i] = 1;
-    if (shirtFront && trunk && y > waistY - 0.05 * k && wHand[i] < 0.3 && (wNeck[i] < 0.5 || y < neckY + 0.012 * k)) shirtR[i] = 1;
     const nj = Jp[bi('neck')];
-    const nearNeck = Math.hypot(P[i * 3] - nj.x, (P[i * 3 + 2] - nj.z) * 0.9) < 0.072 * k;
-    if (wNeck[i] + wTorso[i] > 0.5 && y >= neckY - 0.02 * k && y < collarTop && wHead[i] < 0.05 && nearNeck) collarR[i] = 1;
+    const neckR = Math.hypot(P[i * 3] - nj.x, (P[i * 3 + 2] - nj.z) * 0.9);
+    const nearNeck = neckR < 0.088 * k; // reaches over the coat's neckline so its stepped edge is hidden
+    // the neck column stays bare above the collar; everything off it (the trapezius, the top of the back) is cloth
+    const shoulder = wNeck[i] > 0.2 && wHead[i] < 0.05 && (y < neckY + 0.012 * k || neckR > 0.056 * k);
+    // summed, not either-or: a vertex on top of the shoulder is half torso and half arm and must still be covered
+    const upperCloth = wTorso[i] + wArm[i] + (y > waistY - 0.07 * k ? wHips[i] : 0) + (shoulder ? wNeck[i] : 0);
+    if ((upperCloth > 0.5 || (trunk && y > waistY - 0.07 * k) || sleeve || shoulder) && wHand[i] < 0.3 && wHead[i] < 0.05) topR[i] = 1;
+    // the shirt exists only where it can be seen: the V and a margin under the lapels. Anywhere else it could only
+    // poke through the coat at the shoulders when the arms move.
+    if (shirtFront && wHand[i] < 0.3 && wHead[i] < 0.05 && wArm[i] < 0.3 && frontVWide(i)) shirtR[i] = 1;
+    if (wNeck[i] + wTorso[i] > 0.5 && y >= neckY - 0.035 * k && y < collarTop && wHead[i] < 0.05 && nearNeck && !(shirtFront && frontV(i) > 0.5 && y < neckY)) collarR[i] = 1;
     if (trunk && y < waistY + 0.03 * k && y > ankleY + 0.02 * k && wFoot[i] < 0.35) legR[i] = 1;
     if (wFoot[i] > 0.25 || ((wLeg[i] > 0.2) && y < ankleY + (out === 'work' ? 0.09 : 0.035) * k)) footR[i] = 1;
   }
@@ -689,15 +810,17 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
 
   // which body skin is hidden under clothes (one ring in from each garment edge, so no gaps show)
   const covered = new Uint8Array(nO);
-  const cover = (used: Uint8Array, all = false): void => {
+  // keep: which garment edges keep a ring of skin under them. A cuff does (the hand starts right there); a neckline
+  // or shoulder edge does not, because the collar covers it and a leftover ring shows through as bare slivers.
+  const cover = (used: Uint8Array, all = false, keep: (i: number) => boolean = () => true): void => {
     for (let i = 0; i < nO; i++) {
       if (!used[i]) continue;
-      let inner = !all;
       if (all) {
         covered[i] = 1;
         continue;
       }
-      for (let j = S.nbrStart[i]; j < S.nbrStart[i + 1]; j++) if (!used[S.nbr[j]]) inner = false;
+      let inner = true;
+      for (let j = S.nbrStart[i]; j < S.nbrStart[i + 1]; j++) if (!used[S.nbr[j]] && keep(S.nbr[j])) inner = false;
       if (inner) covered[i] = 1;
     }
   };
@@ -750,7 +873,7 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
       extra: (i) => (out === 'fur' ? (vnoise(P[i * 3] * 40, P[i * 3 + 1] * 40, P[i * 3 + 2] * 40) - 0.3) * 0.012 : 0) + wArm[i] * (coat ? 0.004 : 0.002),
       fold: (i, p) => coatFold(coat ? 0.026 : 0.012)(i, p) + (furAmp ? (vnoise(p.x * 22, p.y * 22, p.z * 22) - 0.5) * furAmp : 0),
     });
-    cover(sh.used);
+    cover(sh.used, false, (n) => wHand[n] > 0.2 || wHead[n] > 0.3);
     const stole = new THREE.Color(0x4a1e46);
     const col = colorArr((i, c) => {
       wear(i, c, topC);
@@ -994,6 +1117,8 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     }
     return uv;
   };
+  // the outer surface of the hair, so hats and glasses can be fitted over it
+  const hairPts: number[] = [];
   const scalpShell = (m: Float32Array, thick: number, lumps: number, color: THREE.Color, rough: number, alpha: (i: number) => number, tint?: (i: number, c: THREE.Color) => void): void => {
     const reg = new Uint8Array(nO);
     for (let i = 0; i < nO; i++) reg[i] = m[i] > 0.02 ? 1 : 0;
@@ -1013,6 +1138,7 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
       },
       alpha,
     );
+    for (let i = 0; i < nO; i++) if (sh.used[i] && alpha(i) > 0.5) hairPts.push(sh.pos[i * 3], sh.pos[i * 3 + 1], sh.pos[i * 3 + 2]);
     const mesh = addMesh(makeGeo(sh.pos, sh.nrm, sh.tris, colr, 4, sphereUV(sh.pos), true), hairMat(new THREE.Color(1, 1, 1), rough), false);
     mesh.renderOrder = 1;
   };
@@ -1114,8 +1240,21 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
 
   // ---------------------------------------------------------------- skin colour
   const skinCol = new Float32Array(nO * 3);
+  const wetness = new Float32Array(nO).fill(0);
+  const innerOf = (i: number): number => {
+    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+    if (i >= S.nBody || wHead[i] < 0.5 || Math.abs(x) > mouthHalf * 1.05 || Math.abs(y - my) > 0.022 * k || z > mz + 0.004 * k) return 0;
+    const nz = N[i * 3 + 2], ny = N[i * 3 + 1];
+    // only the lip tissue itself, or anything already behind the lips, can face into the mouth; the fold under
+    // the lower lip also faces down and must stay skin
+    const rawLip = S.masks[i * J.masks.length + J.masks.indexOf('lips')] / 255;
+    const facingBack = rawLip > 0.1 || z < mz - 0.004 * k ? smooth(0.1, -0.2, nz) : 0;
+    const floorOrRoof = z < mz - 0.004 * k && ((y < my && ny > 0.25) || (y > my && ny < -0.25)) ? 1 : 0;
+    return Math.max(facingBack, floorOrRoof);
+  };
   {
     const base = o.skin.clone();
+    const innerMouth = new THREE.Color(0.11, 0.025, 0.03);
     const lip = fem && look.lipstick ? new THREE.Color(0x6a0c14) : base.clone().multiply(new THREE.Color(0.78, 0.5, 0.5));
     const flush = new THREE.Color(1.06, 0.82, 0.8);
     const bruise = new THREE.Color(0.72, 0.6, 0.66);
@@ -1160,17 +1299,15 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
       // coal dust and grime
       if (look.grime > 0) c.multiplyScalar(1 - look.grime * 0.5 * smooth(0.4, 0.8, vnoise(x * 14 + 9, y * 14, z * 14)));
       if (look.barefoot && y < 0.02 * k) c.multiplyScalar(0.55);
-      // inside the lips: only seen when the mouth opens, and dark and wet when it does
-      if (Math.abs(x) < mouthHalf * 0.95 && Math.abs(y - my) < 0.018 * k && wHead[i] > 0.5) {
-        // facing into the mouth: the normal points toward a spot just behind the lips
-        const inward = N[i * 3] * -x + N[i * 3 + 1] * (my - y) + N[i * 3 + 2] * (mz - 0.012 * k - z);
-        if (z < mz - 0.006 * k || (inward > 0 && N[i * 3 + 2] < 0.3)) c.setRGB(0.09, 0.02, 0.02);
-      }
+      // inside the mouth. The fold under the lower lip faces forward and down, so it keeps its skin; the inside of
+      // the lips faces back into the head, the floor of the mouth faces up, the roof faces down and back.
+      if (innerOf(i) > 0) c.lerp(innerMouth, innerOf(i));
 
       skinCol[i * 3] = c.r;
       skinCol[i * 3 + 1] = c.g;
       skinCol[i * 3 + 2] = c.b;
     }
+    if (o.paint) o.paint(sculptInfo(), skinCol, wetness);
     // creases: concave places (the fold beside the nose, eye corners, between the lips, ears) are darker
     for (let i = 0; i < S.nBody; i++) {
       let s = 0, n = 0;
@@ -1196,27 +1333,164 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     bodyIdx.push(S.body[t], S.body[t + 1], S.body[t + 2]);
   }
   const nBodyIdx = bodyIdx.length;
-  for (let t = 0; t < S.teeth.length; t++) bodyIdx.push(S.teeth[t]);
   const bodyGeo = makeGeo(P, N, bodyIdx, skinCol, 3, undefined, true);
-  bodyGeo.addGroup(0, nBodyIdx, 0);
-  bodyGeo.addGroup(nBodyIdx, S.teeth.length, 1);
+  void nBodyIdx;
+  // no shine inside the mouth: the inside triangles are painted black in a specular mask in the body's UV layout
+  const specCanvas = document.createElement('canvas');
+  specCanvas.width = specCanvas.height = 512;
+  {
+    const gx = specCanvas.getContext('2d')!;
+    gx.fillStyle = '#fff';
+    gx.fillRect(0, 0, 512, 512);
+    // specularIntensityMap reads alpha, sheenColorMap reads colour: cutting the triangles out clears both
+    gx.globalCompositeOperation = 'destination-out';
+    gx.fillStyle = '#000';
+    gx.strokeStyle = '#000';
+    gx.lineWidth = 2;
+    for (let t = 0; t < S.body.length; t += 3) {
+      const ids = [S.body[t], S.body[t + 1], S.body[t + 2]];
+      if (!ids.some((s2) => innerOf(S.splitOrig[s2]) > 0.4)) continue;
+      gx.beginPath();
+      ids.forEach((s2, j) => (j ? gx.lineTo : gx.moveTo).call(gx, S.uv[s2 * 2] * 512, (1 - S.uv[s2 * 2 + 1]) * 512));
+      gx.closePath();
+      gx.fill();
+      gx.stroke();
+    }
+  }
+  const specMap = new THREE.CanvasTexture(specCanvas);
+  specMap.flipY = true;
+  own(specMap);
   // skin: a softer highlight than plain plastic, and a warm sheen at the edges where light passes through
-  const skinMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.62, metalness: 0, specularIntensity: 0.45, sheen: 0.35, sheenRoughness: 0.7, sheenColor: new THREE.Color(0.55, 0.22, 0.16), bumpMap: pores(), bumpScale: 0.35 });
+  const skinMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.62, metalness: 0, specularIntensity: 0.45, specularIntensityMap: specMap, sheen: 0.35, sheenRoughness: 0.7, sheenColor: new THREE.Color(0.55, 0.22, 0.16), sheenColorMap: specMap, bumpMap: pores(), bumpScale: 0.35 });
   own(skinMat);
-  const teethMat = new THREE.MeshStandardMaterial({ color: o.fake ? 0xe8e8e2 : look.age > 60 ? 0x9a8a68 : 0xb8ab8a, roughness: 0.35, metalness: 0 });
+  // the inside of the mouth gets no light from the hall: the head would shadow it, and point lights cast no
+  // shadows here, so the shader is told how deep inside the mouth each vertex is
+  const cav = new Float32Array(nO);
+  for (let i = 0; i < nO; i++) cav[i] = innerOf(i);
+  bodyGeo.setAttribute('cavity', new THREE.BufferAttribute(toSplit(cav, 1), 1));
+  // wetness: wet skin and fresh blood are glossy, dry skin is matte (only the tall one uses it)
+  bodyGeo.setAttribute('wet', new THREE.BufferAttribute(toSplit(wetness, 1), 1));
+  skinMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('void main() {', 'attribute float cavity;\nattribute float wet;\nvarying float vCav;\nvarying float vWet;\nvoid main() {\n  vCav = cavity;\n  vWet = wet;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('void main() {', 'varying float vCav;\nvarying float vWet;\nvoid main() {')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.16, vWet);')
+      .replace('#include <opaque_fragment>', 'outgoingLight *= 1.0 - 0.9 * vCav;\n#include <opaque_fragment>');
+  };
+  skinMat.customProgramCacheKey = () => 'human-skin-cavity-wet';
+  const body = addMesh(bodyGeo, skinMat);
+
+  // ---------------------------------------------------------------- teeth, gums and tongue
+  // MakeHuman's helper teeth are two 68 vertex strips. They only give the size and place of each arch; the arch
+  // itself is built here: incisors, canines, premolars and molars along a curve, set into a gum line, a little
+  // uneven, upper on the skull and lower on the jaw.
+  const teethMat = new THREE.MeshStandardMaterial({ color: o.fake ? 0xd2d0c6 : look.age > 60 ? 0xa89c80 : 0xc8bea4, roughness: 0.42, metalness: 0, vertexColors: true });
   own(teethMat);
-  const body = addMesh(bodyGeo, [skinMat, teethMat]);
+  const gumMat = new THREE.MeshStandardMaterial({ color: o.fake ? 0x5a4a4c : 0x6a2a2c, roughness: 0.5, metalness: 0 });
+  own(gumMat);
+  const mouthParts: THREE.Mesh[] = [];
+  for (const upper of [true, false]) {
+    let x1 = 0, zF = -9, zB = 9, yLo = 9, yHi = -9;
+    for (let i = S.nBody; i < nO; i++) {
+      const isJaw = J.bones[S.skinIdx[i * 4]].name === 'jaw';
+      if (isJaw === upper) continue;
+      x1 = Math.max(x1, Math.abs(P[i * 3]));
+      zF = Math.max(zF, P[i * 3 + 2]);
+      zB = Math.min(zB, P[i * 3 + 2]);
+      yLo = Math.min(yLo, Y(i));
+      yHi = Math.max(yHi, Y(i));
+    }
+    const sz = x1 / 0.026; // MakeHuman's arch is about 26 mm to the side
+    const widths = [8.5, 6.5, 7.5, 7, 6.8, 10, 9.5].map((w) => w * 0.001 * sz * (upper ? 1 : 0.92));
+    const parts: THREE.BufferGeometry[] = [];
+    const gumPts: THREE.Vector3[] = [];
+    const depth = zF - zB;
+    // arch: front at zF, curving back to zB at the last molar
+    const archAt = (s1: number): THREE.Vector3 => {
+      const t = Math.min(1, s1 / (x1 * 1.9));
+      return new THREE.Vector3(Math.sin(t * 1.25) / Math.sin(1.25) * x1 * 0.98, 0, zF - depth * Math.pow(t, 1.6));
+    };
+    // crowns hang from the gum: the upper ones down from the top of the helper strip, the lower ones up from its bottom
+    const gumY = upper ? yHi : yLo;
+    const toothH = 0.0105 * sz * (upper ? 1 : 0.9);
+    for (const sd of [-1, 1]) {
+      let along = 0;
+      widths.forEach((w, n) => {
+        const a = archAt(along + w / 2);
+        const b = archAt(along + w / 2 + 0.001);
+        along += w;
+        // turn the tooth so its width runs along the arch (a rotation about y maps x to (cos, 0, -sin))
+        const tang = Math.atan2(-(b.z - a.z), sd * (b.x - a.x));
+        const h = toothH * [1, 0.92, 1.08, 0.86, 0.84, 0.78, 0.74][n];
+        const dz = [2.2, 2.0, 3.5, 6.5, 6.5, 9, 8.5][n] * 0.001 * sz;
+        const g = new RoundedBoxGeometry(w * 1.02, h, dz, 1, Math.min(w, dz) * 0.18);
+        // incisors are blades, narrowing to the edge
+        const pa = g.attributes.position as THREE.BufferAttribute;
+        for (let v = 0; v < pa.count; v++) {
+          const edge = upper ? -pa.getY(v) / h + 0.5 : pa.getY(v) / h + 0.5;
+          pa.setZ(v, pa.getZ(v) * (1 - (n < 2 ? 0.45 : 0.15) * edge));
+        }
+        const jitter = (hash(o.seed, n * 2 + (sd > 0 ? 1 : 0), upper ? 3 : 4) - 0.5) * (look.age > 55 ? 0.12 : 0.05);
+        const m = new THREE.Matrix4().compose(
+          new THREE.Vector3(sd * a.x, gumY + (upper ? -1 : 1) * (h * 0.5 - 0.001 * sz) + jitter * h * 0.2, a.z),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(jitter * 0.4, tang + jitter * 0.5, jitter * 0.5)),
+          new THREE.Vector3(1, 1, 1),
+        );
+        g.applyMatrix4(m);
+        // further back is darker: less light reaches the molars
+        const shade = (1 - n * 0.11) * (0.92 + jitter);
+        const col = new Float32Array((g.attributes.position as THREE.BufferAttribute).count * 3).fill(shade);
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        parts.push(g);
+      });
+    }
+    for (let j = -12; j <= 12; j++) {
+      const a = archAt((Math.abs(j) / 12) * x1 * 1.9);
+      gumPts.push(new THREE.Vector3(Math.sign(j) * a.x, gumY, a.z - 0.0015 * sz));
+    }
+    const geo = mergeGeometries(parts.map((g) => g.toNonIndexed()), false)!;
+    geo.computeVertexNormals();
+    own(geo);
+    for (const g of parts) g.dispose();
+    const gumGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(gumPts), 40, 0.0028 * sz, 6);
+    own(gumGeo);
+    const bone = bones[bi(upper ? 'head' : 'jaw')];
+    for (const [g, m] of [[geo, teethMat], [gumGeo, gumMat]] as const) {
+      const mesh = new THREE.Mesh(g, m);
+      bone.add(mesh);
+      mesh.position.copy(bone.worldToLocal(new THREE.Vector3()));
+      mouthParts.push(mesh);
+    }
+    if (!upper) {
+      // the tongue lies in the floor of the mouth, behind the lower teeth
+      const tg = new THREE.SphereGeometry(1, 14, 10);
+      own(tg);
+      const tongue = new THREE.Mesh(tg, gumMat);
+      bone.add(tongue);
+      tongue.position.copy(bone.worldToLocal(new THREE.Vector3(0, yLo + toothH * 0.35, zB + depth * 0.25)));
+      tongue.scale.set(x1 * 0.75, toothH * 0.45, depth * 0.75);
+      mouthParts.push(tongue);
+    }
+  }
   void skinColBase;
 
-  // the inside of the mouth, so an open mouth is dark rather than see-through
+  // the mouth cavity. MakeHuman's head has no inside behind the lips, so an open mouth would show the room through
+  // the head. Two dark half-shells close it: the roof rides the skull, the floor rides the jaw, and they overlap so
+  // no gap opens however far the jaw drops. They sit inside the lips and chin, so they are only seen through the mouth.
+  const cavityParts: THREE.Mesh[] = [];
   {
-    const g = new THREE.SphereGeometry(0.024 * k, 12, 10);
-    own(g);
-    const mm = new THREE.MeshBasicMaterial({ color: 0x140606 });
-    own(mm);
-    const mouth = new THREE.Mesh(g, mm);
-    mouth.scale.set(1.2, 0.9, 1);
-    atHead(mouth, new THREE.Vector3(0, my - 0.004 * k, mz - 0.03 * k));
+    const cm = new THREE.MeshBasicMaterial({ color: 0x0c0304, side: THREE.DoubleSide });
+    own(cm);
+    for (const upper of [true, false]) {
+      const g = new THREE.SphereGeometry(1, 18, 10, 0, Math.PI * 2, upper ? 0 : Math.PI * 0.4, Math.PI * 0.6);
+      own(g);
+      const m = new THREE.Mesh(g, cm);
+      m.scale.set(mouthHalf * 1.1, (upper ? 0.026 : 0.032) * k, 0.028 * k);
+      const bone = bones[bi(upper ? 'head' : 'jaw')];
+      bone.add(m);
+      m.position.copy(bone.worldToLocal(new THREE.Vector3(0, my + (upper ? -0.006 : 0.002) * k, lipFront - 0.046 * k)));
+      cavityParts.push(m);
+    }
   }
 
   // ---------------------------------------------------------------- eyes
@@ -1236,56 +1510,234 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
   eyes.sort((a, b) => a.x - b.x); // index 0 is the visitor's right eye (x < 0), like the old rig
 
   // ---------------------------------------------------------------- hats and glasses, fitted to the skull
-  const midZ = (frontZ + backZ) / 2;
-  const halfD = (frontZ - backZ) / 2;
-  const felt = new THREE.MeshStandardMaterial({ color: topC.clone().multiplyScalar(0.85), roughness: 0.9 });
-  own(felt);
-  const prim = (g: THREE.BufferGeometry, m: THREE.Material, at: THREE.Vector3): THREE.Mesh => {
+  // Everything is measured from the actual head and hair surface of this person: a hat band is the cross-section of
+  // the head (with its hair) at the band height, the glasses sit just clear of brow, cheek and nose, and the arms
+  // follow the side of the head to the top of each ear. Each piece is one group on the head bone, so it turns,
+  // tilts and walks with the head.
+  const isHeadSkin = (i: number): boolean => i < S.nBody && wHead[i] + wNeck[i] * 0.5 > 0.5;
+  const earMask = (i: number): number => S.masks[i * J.masks.length + J.masks.indexOf('ears')] / 255;
+  /** Cross-section of skin and hair at height y: half width, front and back. */
+  const section = (y: number, tol = 0.005 * k): { rx: number; zMin: number; zMax: number } => {
+    let rx = 0, zMin = 9, zMax = -9;
+    const take = (x: number, yy: number, z: number): void => {
+      if (Math.abs(yy - y) > tol) return;
+      rx = Math.max(rx, Math.abs(x));
+      zMin = Math.min(zMin, z);
+      zMax = Math.max(zMax, z);
+    };
+    for (let i = 0; i < S.nBody; i++) if (isHeadSkin(i) && earMask(i) < 0.2) take(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+    for (let j = 0; j < hairPts.length; j += 3) take(hairPts[j], hairPts[j + 1], hairPts[j + 2]);
+    return { rx, zMin, zMax };
+  };
+  let crownY = topY;
+  for (let j = 1; j < hairPts.length; j += 3) crownY = Math.max(crownY, hairPts[j]);
+  const assembly = (): THREE.Group => {
+    const grp = new THREE.Group();
+    atHead(grp, new THREE.Vector3()); // the group's own coordinates are the rest-pose world coordinates
+    return grp;
+  };
+  const piece = (grp: THREE.Group, g: THREE.BufferGeometry, m: THREE.Material, shadow = true): THREE.Mesh => {
     own(g);
     const mesh = new THREE.Mesh(g, m);
-    mesh.castShadow = true;
-    atHead(mesh, at);
+    mesh.castShadow = shadow;
+    grp.add(mesh);
     return mesh;
   };
-  const band = eyeY + (topY - eyeY) * 0.6;
+  /** A ring of the head's own shape at height y (ellipse from the measured section), grown by `grow`. */
+  const ringAt = (y: number, grow: number): { cz: number; rx: number; rz: number } => {
+    const sec = section(y);
+    return { cz: (sec.zMin + sec.zMax) / 2, rx: sec.rx + grow, rz: (sec.zMax - sec.zMin) / 2 + grow };
+  };
+  /** A hat body from a profile: [height above the band, scale of the band ellipse], swept round the head. */
+  const hatBody = (y0: number, ring: { cz: number; rx: number; rz: number }, prof: [number, number][], seg = 40, dent = 0): THREE.BufferGeometry => {
+    const pos: number[] = [], idx: number[] = [];
+    prof.forEach(([h, sc], r) => {
+      for (let i = 0; i <= seg; i++) {
+        const a = (i / seg) * Math.PI * 2;
+        // a pinch at the front of the crown, and a centre dent along the top
+        const top = r === prof.length - 1 ? 1 : 0;
+        const pinch = dent * top * Math.max(0, Math.cos(a)) * 0.25;
+        pos.push(Math.sin(a) * ring.rx * sc * (1 - pinch), y0 + h - dent * top * 0.012 * k * Math.abs(Math.cos(a * 0.5)), ring.cz + Math.cos(a) * ring.rz * sc);
+      }
+    });
+    for (let r = 0; r < prof.length - 1; r++)
+      for (let i = 0; i < seg; i++) {
+        const a = r * (seg + 1) + i, b = a + seg + 1;
+        idx.push(a, a + 1, b, b, a + 1, b + 1);
+      }
+    // close the top
+    const c = pos.length / 3;
+    const last = prof[prof.length - 1];
+    pos.push(0, y0 + last[0] - dent * 0.014 * k, ring.cz);
+    for (let i = 0; i < seg; i++) idx.push((prof.length - 1) * (seg + 1) + i, (prof.length - 1) * (seg + 1) + i + 1, c);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  };
+  /** A flat ring (brim) between two scales of the band ellipse, with a curl: up at the sides, down front and back. */
+  const brim = (y0: number, ring: { cz: number; rx: number; rz: number }, s0: number, s1: number, curl: number, front = 1, seg = 48): THREE.BufferGeometry => {
+    const pos: number[] = [], idx: number[] = [];
+    for (let r = 0; r <= 3; r++) {
+      const t = r / 3;
+      for (let i = 0; i <= seg; i++) {
+        const a = (i / seg) * Math.PI * 2;
+        const sc = s0 + (s1 - s0) * t * (Math.cos(a) > 0 ? front : 1);
+        pos.push(Math.sin(a) * ring.rx * sc, y0 + curl * t * t * (Math.sin(a) ** 2 - 0.6 * Math.cos(a) ** 2), ring.cz + Math.cos(a) * ring.rz * sc);
+      }
+    }
+    for (let r = 0; r < 3; r++)
+      for (let i = 0; i < seg; i++) {
+        const a = r * (seg + 1) + i, b = a + seg + 1;
+        idx.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  };
+  const feltTex = fabricTexture('wool').clone();
+  feltTex.needsUpdate = true;
+  feltTex.repeat.set(4, 2);
+  own(feltTex);
+  const felt = new THREE.MeshStandardMaterial({ color: topC.clone().multiplyScalar(0.85), map: feltTex, roughness: 0.92, side: THREE.DoubleSide });
+  own(felt);
+  const hatGap = 0.002 * k; // felt resting on hair, not sunk into it
   if (look.hat === 'trilby') {
-    prim(new THREE.CylinderGeometry(1, 1, 0.01 * k, 28), felt, new THREE.Vector3(0, band, midZ + 0.005 * k)).scale.set(halfW * 1.9, 1, halfD * 1.75);
-    const crown = prim(new THREE.CylinderGeometry(0.86, 1, 0.12 * k, 24), felt, new THREE.Vector3(0, band + 0.06 * k, midZ - 0.004 * k));
-    crown.scale.set(halfW * 1.22, 1, halfD * 1.2);
-    const ribbon = new THREE.MeshStandardMaterial({ color: 0x141210, roughness: 0.6 });
+    const grp = assembly();
+    const y0 = eyeY + 0.05 * k;
+    const ring = ringAt(y0, hatGap);
+    const crownH = Math.max(crownY - y0 + 0.03 * k, 0.1 * k);
+    piece(grp, hatBody(y0, ring, [[0, 1], [crownH * 0.5, 0.97], [crownH * 0.9, 0.9], [crownH, 0.84]], 40, 1), felt);
+    piece(grp, brim(y0 + 0.001 * k, ring, 1.0, 1.55, 0.012 * k, 1.12), felt);
+    const ribbon = new THREE.MeshStandardMaterial({ color: 0x141210, roughness: 0.55, side: THREE.DoubleSide });
     own(ribbon);
-    prim(new THREE.CylinderGeometry(1, 1, 0.016 * k, 24, 1, true), ribbon, new THREE.Vector3(0, band + 0.014 * k, midZ - 0.004 * k)).scale.set(halfW * 1.225, 1, halfD * 1.205);
+    piece(grp, hatBody(y0 + 0.002 * k, { cz: ring.cz, rx: ring.rx + 0.0015 * k, rz: ring.rz + 0.0015 * k }, [[0, 1], [0.016 * k, 0.99]]), ribbon, false);
   } else if (look.hat === 'flat') {
-    const crown = prim(new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), felt, new THREE.Vector3(0, band - 0.012 * k, midZ - 0.004 * k));
-    crown.scale.set(halfW * 1.3, (topY - band) * 1.9 + 0.02 * k, halfD * 1.32);
-    const peak = prim(new THREE.CylinderGeometry(1, 1, 0.008 * k, 20, 1, false, -Math.PI / 2, Math.PI), felt, new THREE.Vector3(0, band - 0.004 * k, frontZ - 0.005 * k));
-    peak.scale.set(halfW * 0.9, 1, 0.055 * k);
-    peak.rotation.x = 0.15;
+    // a flat cap: the band sits low on the forehead, the crown is full and pulled forward over a stiff peak
+    const grp = assembly();
+    const y0 = eyeY + 0.045 * k;
+    const ring = ringAt(y0, hatGap);
+    const h = crownY - y0 + 0.012 * k;
+    const g = hatBody(y0, ring, [[0, 1], [h * 0.45, 1.05], [h * 0.8, 0.95], [h, 0.6]]);
+    const pa = g.attributes.position as THREE.BufferAttribute;
+    for (let v = 0; v < pa.count; v++) {
+      const up = (pa.getY(v) - y0) / h;
+      pa.setZ(v, pa.getZ(v) + Math.max(0, up) * 0.018 * k); // fullness slides forward toward the peak
+    }
+    g.computeVertexNormals();
+    piece(grp, g, felt);
+    // the peak: a half ellipse out of the front of the band, angled down
+    const pk = new THREE.CircleGeometry(1, 24, -Math.PI / 2 + 0.25, Math.PI - 0.5);
+    pk.rotateX(-Math.PI / 2);
+    pk.scale(ring.rx * 0.95, 1, 0.06 * k);
+    pk.rotateX(0.22);
+    pk.translate(0, y0 + 0.002 * k, ring.cz + ring.rz * 0.92);
+    piece(grp, pk, felt);
   } else if (look.hat === 'cloche') {
-    const bell = prim(new THREE.SphereGeometry(1, 22, 12, 0, Math.PI * 2, 0, Math.PI * 0.6), felt, new THREE.Vector3(0, eyeY + (topY - eyeY) * 0.45, midZ - 0.006 * k));
-    bell.scale.set(halfW * 1.16, (topY - eyeY) * 0.7, halfD * 1.16);
+    // a cloche comes down to the brows and hugs the skull, with a narrow turned brim
+    const grp = assembly();
+    const y0 = eyeY + 0.028 * k;
+    const ring = ringAt(y0 + 0.01 * k, hatGap + 0.004 * k);
+    const h = crownY - y0 + 0.01 * k;
+    const prof: [number, number][] = [];
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8;
+      const yy = y0 + h * t;
+      const sec = section(Math.min(yy, crownY - 0.004 * k));
+      const sc = Math.min(1.02, Math.max(0.15, (sec.rx + hatGap + 0.004 * k) / ring.rx));
+      prof.push([h * t, t < 1 ? sc : 0.12]);
+    }
+    piece(grp, hatBody(y0, ring, prof, 40), felt);
+    piece(grp, brim(y0, ring, 1.0, 1.18, -0.01 * k, 1.05), felt);
   } else if (look.hat === 'nurse') {
-    const white = new THREE.MeshStandardMaterial({ color: 0xf0eee6, roughness: 0.7 });
+    // a starched cap pinned on the crown, behind the hairline
+    const grp = assembly();
+    const white = new THREE.MeshStandardMaterial({ color: 0xf0eee6, roughness: 0.7, side: THREE.DoubleSide });
     own(white);
-    const cap = prim(new THREE.BoxGeometry(halfW * 1.3, 0.05 * k, halfD * 0.9), white, new THREE.Vector3(0, topY - 0.005 * k, midZ - 0.01 * k));
-    cap.rotation.x = -0.35;
+    const y0 = crownY - 0.035 * k;
+    const ring = ringAt(y0, hatGap);
+    piece(grp, hatBody(y0, { cz: ring.cz - 0.01 * k, rx: ring.rx * 0.9, rz: ring.rz * 0.8 }, [[0, 1], [0.03 * k, 0.95], [0.045 * k, 0.7]]), white);
+    const fold = piece(grp, new THREE.PlaneGeometry(ring.rx * 1.6, 0.03 * k), white);
+    fold.position.set(0, y0 + 0.045 * k, ring.cz + ring.rz * 0.35);
+    fold.rotation.x = -0.5;
   }
   if (look.glasses) {
-    const frame = new THREE.MeshStandardMaterial({ color: 0x15110d, roughness: 0.4, metalness: 0.3 });
+    const grp = assembly();
+    const frame = new THREE.MeshStandardMaterial({ color: 0x15110d, roughness: 0.35, metalness: 0.35 });
     own(frame);
-    const glass = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.12, depthWrite: false });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.1, depthWrite: false, clearcoat: 1 });
     own(glass);
+    const wire = 0.0013 * k;
+    const lensR = eyesBind[0].r * 1.5;
+    // the lens plane: clear of the brow, the cheek and the eyeball in front of each eye
+    let lensZ = -9;
     for (const e of eyesBind) {
-      const at = e.c.clone().add(new THREE.Vector3(0, 0.001 * k, e.r * 1.55));
-      prim(new THREE.TorusGeometry(e.r * 1.4, 0.0016 * k, 6, 24), frame, at).scale.y = 0.8;
-      prim(new THREE.CircleGeometry(e.r * 1.4, 20), glass, at).scale.y = 0.8;
-      // the arm back to the ear
-      const sx = Math.sign(e.c.x);
-      const arm = prim(new THREE.BoxGeometry(0.0022 * k, 0.0025 * k, halfD * 1.1), frame, new THREE.Vector3(sx * (Math.abs(e.c.x) + e.r * 1.38), e.c.y + 0.004 * k, at.z - halfD * 0.55));
-      arm.rotation.y = sx * 0.06;
+      lensZ = Math.max(lensZ, e.c.z + e.r + 0.008 * k);
+      for (let i = 0; i < S.nBody; i++) {
+        if (!isHeadSkin(i)) continue;
+        const dx = P[i * 3] - e.c.x, dy = P[i * 3 + 1] - e.c.y;
+        if (dx * dx + dy * dy < (lensR + 0.003 * k) ** 2) lensZ = Math.max(lensZ, P[i * 3 + 2] + 0.003 * k);
+      }
     }
-    const gap = Math.abs(eyesBind[0].c.x - eyesBind[1].c.x) - eyesBind[0].r * 2.8;
-    prim(new THREE.BoxGeometry(Math.max(0.004, gap), 0.0022 * k, 0.002 * k), frame, new THREE.Vector3(0, eyeY + 0.005 * k, eyesBind[0].c.z + eyesBind[0].r * 1.7));
+    const lensC = eyesBind.map((e) => new THREE.Vector3(e.c.x, e.c.y + 0.001 * k, lensZ));
+    for (const c of lensC) {
+      const rim = piece(grp, new THREE.TorusGeometry(lensR, wire, 6, 32), frame);
+      rim.position.copy(c);
+      rim.scale.y = 0.86;
+      const lens = piece(grp, new THREE.CircleGeometry(lensR, 24), glass, false);
+      lens.position.copy(c);
+      lens.scale.y = 0.86;
+    }
+    // the bridge arches over the nose, resting on it
+    let noseZ = -9;
+    for (let i = 0; i < S.nBody; i++) if (isHeadSkin(i) && Math.abs(P[i * 3]) < 0.005 * k && Math.abs(P[i * 3 + 1] - (eyeY + 0.002 * k)) < 0.006 * k) noseZ = Math.max(noseZ, P[i * 3 + 2]);
+    const inner = lensC.map((c) => c.clone().add(new THREE.Vector3(-Math.sign(c.x) * lensR, 0.002 * k, 0)));
+    const bridgeMid = new THREE.Vector3(0, eyeY + 0.007 * k, Math.max(noseZ + wire * 1.5, lensZ - 0.004 * k));
+    piece(grp, new THREE.TubeGeometry(new THREE.CatmullRomCurve3([inner[0], bridgeMid, inner[1]]), 16, wire, 6), frame);
+    // temple arms: from the hinge on the outer rim, along the side of the head, over the top of the ear, down behind it
+    for (const [n, c] of lensC.entries()) {
+      const sd = Math.sign(c.x);
+      // the top of this ear and where it joins the head
+      let earTop = -9, earZ = 0, earX = 0;
+      for (let i = 0; i < S.nBody; i++) {
+        if (earMask(i) < 0.6 || Math.sign(P[i * 3]) !== sd) continue;
+        if (P[i * 3 + 1] > earTop) {
+          earTop = P[i * 3 + 1];
+          earZ = P[i * 3 + 2];
+          earX = Math.abs(P[i * 3]);
+        }
+      }
+      if (earTop < -1) continue;
+      const surfX = (y: number, z: number): number => {
+        let mx = 0;
+        for (let i = 0; i < S.nBody; i++) if (isHeadSkin(i) && earMask(i) < 0.3 && Math.abs(P[i * 3 + 1] - y) < 0.008 * k && Math.abs(P[i * 3 + 2] - z) < 0.008 * k && Math.sign(P[i * 3]) === sd) mx = Math.max(mx, Math.abs(P[i * 3]));
+        for (let j = 0; j < hairPts.length; j += 3) if (Math.abs(hairPts[j + 1] - y) < 0.008 * k && Math.abs(hairPts[j + 2] - z) < 0.008 * k && Math.sign(hairPts[j]) === sd) mx = Math.max(mx, Math.abs(hairPts[j]));
+        return mx;
+      };
+      const hinge = c.clone().add(new THREE.Vector3(sd * lensR * 0.97, lensR * 0.3, -0.002 * k));
+      const pts = [hinge];
+      const yArm = (t: number): number => hinge.y + (earTop + 0.002 * k - hinge.y) * t;
+      for (let j = 1; j <= 5; j++) {
+        const t = j / 6;
+        const z = hinge.z + (earZ - hinge.z) * t;
+        const y = yArm(t);
+        const x = Math.max(Math.abs(hinge.x), surfX(y, z) + 0.003 * k);
+        pts.push(new THREE.Vector3(sd * x, y, z));
+      }
+      const overEar = new THREE.Vector3(sd * Math.max(earX * 0.97, surfX(earTop, earZ) + 0.002 * k), earTop + 0.0025 * k, earZ);
+      pts.push(overEar);
+      // the earpiece curls down behind the ear, tucked against the skull
+      pts.push(new THREE.Vector3(sd * (overEar.x - 0.001 * k), earTop - 0.012 * k, earZ - 0.012 * k));
+      pts.push(new THREE.Vector3(sd * (overEar.x - 0.003 * k), earTop - 0.026 * k, earZ - 0.014 * k));
+      piece(grp, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 40, wire * 0.9, 6), frame);
+      // the hinge block
+      const hb = piece(grp, new THREE.BoxGeometry(0.004 * k, 0.003 * k, 0.005 * k), frame);
+      hb.position.copy(hinge);
+      void n;
+    }
   }
 
   // ---------------------------------------------------------------- rig in the old shape
@@ -1294,8 +1746,8 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     sh: bones[bi('upper' + s)],
     el: bones[bi('fore' + s)],
     hand: bones[bi('hand' + s)],
-    fingers: [bones[bi('fing' + s)]],
-    tips: [bones[bi('tip' + s)]],
+    fingers: [2, 3, 4, 5].map((f) => bones[bi('f' + f + 'a' + s)]),
+    tips: [2, 3, 4, 5].map((f) => bones[bi('f' + f + 'b' + s)]),
   });
   const leg = (s: string): Leg => ({ side: Math.sign(Jp[bi('thigh' + s)].x), hip: bones[bi('thigh' + s)], knee: bones[bi('shin' + s)] });
   const arms = [arm('.L'), arm('.R')].sort((a, b) => a.side - b.side);
@@ -1320,7 +1772,7 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
     skirt,
     scaleY: hipsY / 0.95,
     mouthY: my,
-    mouthZ: mz,
+    mouthZ: lipFront,
     eyes: eyes.map(({ holder, ball }) => ({ holder, ball })),
     ballMat,
     blackEye,
@@ -1329,9 +1781,10 @@ export function buildHuman(look: Look, o: HumanOpts, own: (d: { dispose(): void 
       if (i === undefined) return;
       for (const m of morphMeshes) if (m.morphTargetInfluences) m.morphTargetInfluences[i] = v;
     },
+    mouthParts,
     setPale(t: number): void {
       skinMat.color.setRGB(1, 1, 1).lerp(pale, t);
-      teethMat.visible = t === 0; // when it opens, there is nothing in there
+      void t;
     },
   };
   return rig;
